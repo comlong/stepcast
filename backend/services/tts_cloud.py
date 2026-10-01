@@ -1,11 +1,11 @@
-"""付费的商用配音服务：豆包语音（火山引擎）、MiniMax 语音、通义语音（阿里云百炼 Qwen-TTS）。
+"""Paid voice services: Doubao Speech (Volcengine), MiniMax Speech, Qwen-TTS (Alibaba Cloud Model Studio).
 
-音色 ID 带服务前缀，比如 doubao:zh_female_vv_uranus_bigtts、minimax:English_Graceful_Lady、qwen:Cherry；
-没有前缀的是默认的 Edge 免费音色。tts.synth 按前缀分过来，所以项目音色、两人问答的两位讲者可以各用各的服务。
+Voice IDs carry a service prefix, e.g. doubao:zh_female_vv_uranus_bigtts, minimax:English_Graceful_Lady, qwen:Cherry;
+IDs without a prefix are the default free Edge voices. tts.synth dispatches by prefix, so the project voice and the two Q&A speakers can each use a different service.
 
-- 长文字按句子切成小段分别合成再拼起来（各家单次字数有上限；每段的时长也正好当作字幕和逐条出现的时间）
-- 语速、音量：接口支持的直接传，不支持的（通义）合成后用 ffmpeg 调
-- 出错直接报出来（不像 Edge 那样退回 Windows 离线语音：花钱买的声音悄悄换成机器音不合适）
+- Long text is split into sentence chunks that are synthesised separately and joined (each service limits the length per call; each chunk's duration also serves as timing for subtitles and slide reveals)
+- Speed and volume: passed to the API where supported; otherwise (Qwen) adjusted with ffmpeg after synthesis
+- Errors are reported directly (unlike Edge, there is no fallback to Windows offline voices: silently replacing a paid voice with a robotic one would be wrong)
 """
 from __future__ import annotations
 
@@ -26,13 +26,13 @@ from .. import config, i18n
 from ..i18n import N_
 from . import ffmpeg_util
 
-GAP = 0.12                   # 一段话切成几段合成时，段与段之间的停顿（秒）
+GAP = 0.12                   # pause between the chunks of a paragraph synthesised in several parts (seconds)
 
 
 class CloudTTSError(RuntimeError):
     def __init__(self, msg: str, retry: bool = False):
         super().__init__(msg)
-        self.retry = retry            # 限流、服务端临时出错：值得再试；Key 不对、余额不足、参数不对：再试也没用
+        self.retry = retry            # rate limits, temporary server errors: worth retrying; wrong key, no balance, bad parameters: retrying won't help
 
 
 @dataclass(frozen=True)
@@ -42,8 +42,8 @@ class Service:
     hint: str
     key_url: str
     env: Tuple[str, ...]
-    llm: str = ""                     # 和「AI 模型」里哪一家是同一个 Key（留空时借用）
-    max_chars: int = 150              # 每段最多多少字（按句子切，切出来的每段单独合成）
+    llm: str = ""                     # which AI-model provider shares the same key (borrowed when this one is empty)
+    max_chars: int = 150              # maximum characters per chunk (split by sentences, each chunk synthesised separately)
     model: str = ""
 
 
@@ -62,11 +62,11 @@ SERVICES: Dict[str, Service] = {s.id: s for s in (
             model="qwen3-tts-flash"),
 )}
 
-# ---- 音色 -----------------------------------------------------------------------
+# ---- voices -----------------------------------------------------------------------
 
 MULTI = ["zh", "en", "fr", "de", "ru", "it", "es", "pt", "ja", "ko"]
 
-# 豆包语音合成大模型 2.0 的常用官方音色（完整的几百个见火山引擎文档；自己复刻的音色 ID 可以在设置里加）
+# Common official voices of Doubao Speech Synthesis 2.0 (hundreds more in the Volcengine docs; your own cloned voice IDs can be added in the settings)
 DOUBAO_VOICES = [  # i18n: ignore
     ("zh_female_vv_uranus_bigtts", "Vivi", "Female", "zh-CN"),
     ("zh_female_xiaohe_uranus_bigtts", "小何", "Female", "zh-CN"),  # i18n: ignore
@@ -79,14 +79,14 @@ DOUBAO_VOICES = [  # i18n: ignore
     ("en_female_dacey_uranus_bigtts", "Dacey", "Female", "en-US"),
     ("en_male_tim_uranus_bigtts", "Tim", "Male", "en-US"),
 ]
-# 通义 Qwen-TTS：挑了适合讲解的几个（每个都能说十种语言；方言、童声、角色音没放进来）
+# Qwen-TTS: a few voices suited to narration (each speaks ten languages; dialect, child and character voices left out)
 QWEN_VOICES = [
     ("Cherry", "Cherry", "Female"), ("Serena", "Serena", "Female"), ("Maia", "Maia", "Female"),
     ("Jennifer", "Jennifer", "Female"), ("Katerina", "Katerina", "Female"),
     ("Ethan", "Ethan", "Male"), ("Neil", "Neil", "Male"), ("Andre", "Andre", "Male"),
     ("Kai", "Kai", "Male"), ("Aiden", "Aiden", "Male"), ("Ryan", "Ryan", "Male"),
 ]
-# MiniMax：有 Key 时从接口取完整的系统音色；取不到时用这几个
+# MiniMax: with a key, the full list of system voices is fetched from the API; otherwise these are used
 MINIMAX_FALLBACK = [
     ("Chinese (Mandarin)_Reliable_Executive", "Reliable Executive", "Male", "zh-CN"),
     ("Chinese (Mandarin)_Lyrical_Voice", "Lyrical Voice", "Female", "zh-CN"),
@@ -141,7 +141,7 @@ def _minimax_voices(key: str) -> List[Dict[str, Any]]:
 
 
 def voices(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """已经配好 Key 的服务的音色（没配的不列）。MiniMax 的完整音色要联网取，缓存一小时。"""
+    """Voices of the services that have a key (others aren't listed). MiniMax's full list is fetched online and cached for an hour."""
     cfg = cfg if cfg is not None else config.load()
     out: List[Dict[str, Any]] = []
     if api_key("doubao", cfg):
@@ -153,7 +153,7 @@ def voices(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         hit = _voice_cache.get(key)
         if hit is None or time.time() > hit[0]:
             got = _minimax_voices(key)
-            # 取到了缓存一小时；没取到（断网、Key 不对）先用内置的几个，5 分钟后再试
+            # cached for an hour when fetched; if not (offline, wrong key) use the built-in few and retry after 5 minutes
             hit = (time.time() + (3600 if got else 300),
                    got or [_entry("minimax", v, n, g, loc) for v, n, g, loc in MINIMAX_FALLBACK])
             _voice_cache[key] = hit
@@ -168,7 +168,7 @@ def is_cloud(voice: str) -> bool:
 
 
 def voice_info(voice: str) -> Dict[str, Any]:
-    """一个音色的名字、语言、性别（不联网：MiniMax 用缓存或从 ID 猜）。"""
+    """Name, language and gender of a voice (offline: MiniMax uses the cache or guesses from the ID)."""
     svc, _, vid = (voice or "").partition(":")
     for v in [x for _, (_, lst) in _voice_cache.items() for x in lst]:
         if v["name"] == voice:
@@ -189,7 +189,7 @@ def voice_info(voice: str) -> Dict[str, Any]:
     return {}
 
 
-# ---- 配置 -----------------------------------------------------------------------
+# ---- settings -----------------------------------------------------------------------
 
 def _saved(svc: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
     v = (cfg.get("tts_services") or {}).get(svc)
@@ -197,7 +197,7 @@ def _saved(svc: str, cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def key_source(svc: str, cfg: Optional[Dict[str, Any]] = None) -> Tuple[str, str]:
-    """(Key, 从哪来：config | env:XXX | llm)。"""
+    """(key, where it comes from: config | env:XXX | llm)."""
     cfg = cfg if cfg is not None else config.load()
     s = SERVICES[svc]
     for e in s.env:
@@ -223,7 +223,7 @@ def extra_voices(svc: str, cfg: Dict[str, Any]) -> List[str]:
 
 
 def public_state(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """设置页用：每个服务的说明、Key 掩码、Key 从哪来。"""
+    """For the settings page: each service's description, masked key and where the key comes from."""
     from .llm import _mask
     cfg = cfg if cfg is not None else config.load()
     out = []
@@ -236,7 +236,7 @@ def public_state(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
 
 
 def merge_settings_patch(patch: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """界面提交的 tts_services 合并进已保存的值：没填 Key 就保留原来的。"""
+    """Merge tts_services submitted by the UI into the saved values: an empty key keeps the existing one."""
     incoming = patch.get("tts_services")
     if incoming is None:
         return patch
@@ -254,18 +254,18 @@ def merge_settings_patch(patch: Dict[str, Any], cfg: Optional[Dict[str, Any]] = 
             if "voices" in vals:
                 e["voices"] = str(vals["voices"] or "").strip()
     patch["tts_services"] = merged
-    _voice_cache.clear()                    # Key 可能换了：MiniMax 的音色表重新取
+    _voice_cache.clear()                    # the key may have changed: fetch MiniMax's voice list again
     return patch
 
 
-# ---- 合成 -----------------------------------------------------------------------
+# ---- synthesis -----------------------------------------------------------------------
 
 _SENT_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|(?<=\.)\s+|\n+")
 
 
 def split_chunks(text: str, max_chars: int) -> List[str]:
-    """按句子切成每段不超过 max_chars 的几段（一句本身太长就在逗号处断，再不行硬切）。
-    西文字母占的多（同样的意思字数多），上限放宽一倍。"""
+    """Split into chunks of at most max_chars by sentences (an overly long sentence is split at commas, otherwise hard-cut).
+    Text in Latin letters takes more characters for the same meaning, so the limit is doubled for it."""
     text = (text or "").strip()
     latin = sum(1 for ch in text if ch.isascii()) > len(text) * 0.8
     max_chars = max_chars * 2 if latin else max_chars
@@ -314,7 +314,7 @@ def _json(svc: str, r: requests.Response) -> Dict[str, Any]:
 
 def _doubao(text: str, vid: str, key: str, out: Path, speed: float, cfg: Dict[str, Any]) -> None:
     if vid.startswith("S_"):
-        resource = "seed-icl-2.0"            # 自己复刻的声音
+        resource = "seed-icl-2.0"            # your own cloned voice
     elif vid.endswith("_uranus_bigtts"):
         resource = "seed-tts-2.0"
     else:
@@ -402,11 +402,11 @@ def _qwen(text: str, vid: str, key: str, out: Path, speed: float, cfg: Dict[str,
 
 
 _ENGINES: Dict[str, Callable[..., None]] = {"doubao": _doubao, "minimax": _minimax, "qwen": _qwen}
-NATIVE_SPEED = {"doubao", "minimax"}      # 接口自己能调语速；其余合成后用 ffmpeg 调
+NATIVE_SPEED = {"doubao", "minimax"}      # the API adjusts speed itself; the others are adjusted with ffmpeg after synthesis
 
 
 def synth(text: str, voice: str, out_path: Path, rate: str = "", volume: str = "") -> Tuple[float, List[Dict[str, Any]]]:
-    """用商用服务合成一段话，存成 mp3。返回 (时长, 每段的时间)。每段的时间当作词边界用，字幕、逐条出现照样对得上。"""
+    """Synthesise a paragraph with a paid service and save it as mp3. Returns (duration, time of each chunk). Chunk times serve as word boundaries, so subtitles and slide reveals stay in sync."""
     cfg = config.load()
     svc, _, vid = voice.partition(":")
     if svc not in SERVICES:
@@ -427,7 +427,7 @@ def synth(text: str, voice: str, out_path: Path, rate: str = "", volume: str = "
         for k, piece in enumerate(parts_text):
             f = tmp / f"{k:03d}.bin"
             last: Optional[Exception] = None
-            for attempt in range(3):                 # 网络抖动、限流、服务端临时出错：重试两次
+            for attempt in range(3):                 # network hiccups, rate limits, temporary server errors: retry twice
                 try:
                     _ENGINES[svc](piece, vid, key, f, speed if svc in NATIVE_SPEED else 1.0, cfg)
                     last = None
@@ -437,7 +437,7 @@ def synth(text: str, voice: str, out_path: Path, rate: str = "", volume: str = "
                 except requests.RequestException as e:
                     last = CloudTTSError(i18n.t("{name} 连接失败：{error}", name=i18n.t(SERVICES[svc].name), error=e),
                                          retry=True)
-                except (ValueError, KeyError, TypeError) as e:      # 返回的数据格式不对
+                except (ValueError, KeyError, TypeError) as e:      # the returned data has an unexpected format
                     last = CloudTTSError(i18n.t("{name} 返回了看不懂的内容：{body}",
                                                 name=i18n.t(SERVICES[svc].name), body=e))
                 if not last.retry or attempt == 2:
@@ -466,7 +466,7 @@ def synth(text: str, voice: str, out_path: Path, rate: str = "", volume: str = "
         ffmpeg_util.run(args + ["-filter_complex", graph, "-map", "[out]", "-codec:a", "libmp3lame",
                                 "-b:a", "128k", str(part)])
         os.replace(part, out_path)
-        # 每段的时长（调过语速的按比例换算），当作词边界
+        # duration of each chunk (scaled for speed changes), used as word boundaries
         bounds: List[Dict[str, Any]] = []
         t = 0.0
         scale = 1 / max(0.5, min(2.0, speed)) if svc not in NATIVE_SPEED and abs(speed - 1) > 0.01 else 1.0
@@ -481,7 +481,7 @@ def synth(text: str, voice: str, out_path: Path, rate: str = "", volume: str = "
 
 
 def test(svc: str, api_key_override: str = "") -> Dict[str, Any]:
-    """测试一个服务能不能用：用它的第一个音色合成一小句。"""
+    """Test whether a service works: synthesise a short sentence with its first voice."""
     cfg = dict(config.load())
     if api_key_override.strip():
         cfg["tts_services"] = {**(cfg.get("tts_services") or {}),

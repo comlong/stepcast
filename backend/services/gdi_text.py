@@ -1,11 +1,11 @@
-"""用 Windows 自带的排版引擎（GDI + Uniscribe）画「复杂文字」：阿拉伯文、希伯来文、印地文、泰文……
+"""Draw "complex scripts" with Windows' own text engine (GDI + Uniscribe): Arabic, Hebrew, Hindi, Thai …
 
-Pillow 在 Windows 上没有 HarfBuzz / FriBiDi，这些文字画不对：阿拉伯字母不连写、括号方向反了、
-印地文的元音符号跑到辅音后面、连字拆不开、泰文声调叠在一起。Windows 自己的排版引擎这些都会，
-而且每台 Windows 电脑都有，不用额外装东西。
+Pillow on Windows has no HarfBuzz / FriBiDi and draws these wrong: Arabic letters don't join, brackets face the wrong way,
+Hindi vowel signs end up after the consonant, ligatures fall apart, Thai tone marks pile up. Windows' text engine handles all of this
+and exists on every Windows computer, with nothing extra to install.
 
-只用来画这类文字；中文、英文、日文等照旧用 Pillow，观感不变。
-画出来的是一张灰度遮罩（白字 = 255），由调用方按颜色、描边叠到画面上。
+Only used for these scripts; Chinese, English, Japanese etc. still use Pillow and look as before.
+The result is a grayscale mask (white text = 255) that the caller composites onto the frame with color and outline.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ _WIN_FONTS = str(Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts").lower(
 
 @lru_cache(maxsize=64)
 def _face(path: str) -> Optional[Tuple[str, int]]:
-    """字体文件 -> (GDI 用的字体族名, 粗细)。不在系统字体目录里的字体先私下注册一下。"""
+    """Font file -> (GDI font family name, weight). Fonts outside the system font folder are registered privately first."""
     try:
         from fontTools.ttLib import TTCollection, TTFont
         if path.lower().endswith((".ttc", ".otc")):
@@ -75,12 +75,12 @@ def _face(path: str) -> Optional[Tuple[str, int]]:
     if not family:
         return None
     if not str(Path(path).resolve()).lower().startswith(_WIN_FONTS):
-        _gdi32.AddFontResourceExW(str(path), _FR_PRIVATE, None)   # 只对本进程可见，不改系统
+        _gdi32.AddFontResourceExW(str(path), _FR_PRIVATE, None)   # visible to this process only, the system is not changed
     return family, (700 if weight >= 600 else 400)
 
 
 def _rtl_paragraph(text: str) -> bool:
-    """段落方向跟第一个有方向的字（Unicode 双向算法 P2/P3）。"""
+    """Paragraph direction follows the first character with a direction (Unicode bidi algorithm P2/P3)."""
     for ch in text:
         b = unicodedata.bidirectional(ch)
         if b == "L":
@@ -102,7 +102,7 @@ def _draw(text: str, family: str, weight: int, px: int, measure_only: bool):
         w, h = int(r.right), int(r.bottom)
         if measure_only:
             return w, h
-        # 四周留白：阿拉伯文、印地文的符号会伸出排版框
+        # margin all around: Arabic and Hindi marks extend beyond the layout box
         pad = max(4, px // 2)
         bw, bh = w + pad * 2, h + pad * 2
         bmi = _BMIH(ctypes.sizeof(_BMIH), bw, -bh, 1, 32, 0, 0, 0, 0, 0, 0)
@@ -132,7 +132,7 @@ def _draw(text: str, family: str, weight: int, px: int, measure_only: bool):
 
 @lru_cache(maxsize=4096)
 def measure(text: str, font_path: str, px: int) -> Optional[float]:
-    """排版后的宽度（像素）；用不了 GDI 时返回 None，调用方改用 Pillow 量。"""
+    """Laid-out width in pixels; None if GDI is unavailable (the caller measures with Pillow instead)."""
     face = _face(font_path) if AVAILABLE and font_path else None
     if not face or not text:
         return None
@@ -143,7 +143,7 @@ def measure(text: str, font_path: str, px: int) -> Optional[float]:
 
 @lru_cache(maxsize=128)
 def render(text: str, font_path: str, px: int) -> Optional[Tuple[Image.Image, int, int, int]]:
-    """(遮罩, 排版宽, 排版高, 四周留白)。字幕同一句要画很多帧，结果缓存。"""
+    """(mask, layout width, layout height, margin). A subtitle draws the same sentence for many frames, so the result is cached."""
     face = _face(font_path) if AVAILABLE and font_path else None
     if not face or not text:
         return None

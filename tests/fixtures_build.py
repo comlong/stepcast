@@ -1,7 +1,7 @@
-"""测试用的假素材：一个「网页录制」项目，页面是用 PIL 画的假后台，配音是 ffmpeg 生成的音调。
+"""Synthetic test data: a "recorded website" project whose pages are a fake admin interface drawn with PIL and whose voice-over is ffmpeg-generated tones.
 
-不含任何真实网站、真实截图或公司资料，可以放心提交。调用前要先设好 VT_DATA_DIR（和 config），
-项目直接写在 data_dir 下，不经过 storage，所以导入顺序无所谓。
+Contains no real website, real screenshot or company material, so it is safe to commit. Set VT_DATA_DIR (and config) before calling;
+the project is written directly under data_dir without going through storage, so import order doesn't matter.
 """
 import json
 import shutil
@@ -11,14 +11,14 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 PID = "p_c0ffee000001"
-IMG_W, IMG_H = 1920, 1080          # 截图像素
-VIEW_W, VIEW_H = 1536, 864         # 视口（CSS 像素），相当于 125% 缩放的屏幕
+IMG_W, IMG_H = 1920, 1080          # screenshot pixels
+VIEW_W, VIEW_H = 1536, 864         # viewport (CSS pixels), i.e. a screen scaled to 125%
 DPR = IMG_W / VIEW_W
 
 MENU = ["平台管理", "学习资源", "培训", "培训申请", "运营", "综合查询"]
 SUB = ["机构管理", "用户管理", "角色权限"]
 
-# (动作, 目标元素矩形（CSS 像素）, 点击点, 输入值, 解说) —— 8 步，每步配音 6~7 秒
+# (action, target element rectangle (CSS pixels), click point, typed value, narration) — 8 steps, 6–7 seconds of voice-over each
 STEPS = [
     ("click", (0, 64, 220, 40), (76, 84), "", "首先打开后台管理页面，在左侧菜单里点击「平台管理」。"),
     ("click", (60, 108, 160, 40), (104, 128), "", "展开以后，在下面找到「机构管理」，点击进入。"),
@@ -44,7 +44,7 @@ def _font(size):
 
 
 def _page(step_no: int) -> Image.Image:
-    """画一张假后台页面（在 CSS 像素坐标上画，最后放大到截图像素）。"""
+    """Draw a fake admin page (drawn in CSS pixel coordinates, finally scaled up to screenshot pixels)."""
     im = Image.new("RGB", (VIEW_W, VIEW_H), (245, 247, 250))
     d = ImageDraw.Draw(im)
     f, fb, fs = _font(15), _font(20), _font(13)
@@ -82,7 +82,7 @@ def _page(step_no: int) -> Image.Image:
             d.text((300, yy + 9), f"示例机构 {r + 1:02d}", font=f, fill=(50, 50, 50))
             d.text((700, yy + 9), f"ORG-{2000 + r}", font=f, fill=(90, 90, 90))
             d.text((1000, yy + 9), "启用", font=f, fill=(0, 150, 80))
-    if step_no >= 4:                                    # 新增表单（弹窗）
+    if step_no >= 4:                                    # "add" form (dialog)
         d.rounded_rectangle((460, 180, 1300, 700), 12, fill="white", outline=(200, 205, 215), width=2)
         d.text((490, 200), "新增机构", font=fb, fill=(30, 30, 30))
         for k, (label, yy) in enumerate((("机构编码", 250), ("机构名称", 330), ("所属区域", 410), ("备注", 490))):
@@ -109,7 +109,7 @@ def _duration(path: Path) -> float:
 
 
 def make_capture_project(data_dir: Path, pid: str = PID) -> str:
-    """在 data_dir 下造一个 8 步的网页录制项目（截图 + 配音都齐），返回项目 id。视频总长约 70 秒。"""
+    """Create an 8-step recorded project under data_dir (with screenshots and voice-over); returns the project id. The video is about 70 seconds long."""
     from backend.models import Project, Rect, Step, Target
 
     root = Path(data_dir) / pid

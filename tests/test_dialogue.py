@@ -1,5 +1,5 @@
-"""两人问答：写台词（不给名字、去掉前缀和称呼、不压缩、分批衔接）/ 逐句配音 / 字幕不跨人 / 画面不变 /
-编辑台词 / 讲者 / 换语言 / 导出（假 AI、假配音，不联网）。"""
+"""Two-person Q&A: writing lines (no names, prefixes and forms of address removed, not shortened, batches connected) / line-by-line voice-over / subtitles never span speakers / same frame /
+editing lines / speakers / switching language / export (fake AI, fake voice-over, offline)."""
 import io
 import json
 import os
@@ -38,7 +38,7 @@ def check(name, cond, detail=""):
     cond or fails.append(name)
 
 
-# ---- 假配音：按字数生成一段正弦波，记下每句用的音色 ----
+# ---- fake voice-over: a sine wave whose length depends on the text, recording the voice used for each line ----
 USED = []
 
 

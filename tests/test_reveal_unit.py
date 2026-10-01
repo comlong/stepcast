@@ -1,4 +1,4 @@
-"""逐条出现：分组 / 阅读顺序 / 出现时间 / 渲染（不需要 PowerPoint，图是自己画的）。"""
+"""Reveal one by one: grouping / reading order / timing / rendering (no PowerPoint needed; the images are drawn here)."""
 import os
 import shutil
 import subprocess
@@ -36,14 +36,14 @@ def check(name, cond, detail=""):
 
 
 print("\n== 1. 分组和阅读顺序 ==")
-# 标题 + 一行三张卡片（卡片里有编号和文字）+ 底部一条横幅 + 页码
+# title + a row of three cards (each with a number and text) + a banner at the bottom + page number
 units = [
     Unit(0, [0.05, 0.05, 0.6, 0.08], "五件事同步启动", 1),
     Unit(1, [0.05, 0.25, 0.28, 0.4]), Unit(2, [0.07, 0.27, 0.2, 0.05], "专家"),
     Unit(3, [0.07, 0.34, 0.24, 0.2], "面向一个岗位的 AI 助手"),
     Unit(4, [0.36, 0.25, 0.28, 0.4]), Unit(5, [0.38, 0.27, 0.2, 0.05], "技能"),
     Unit(6, [0.67, 0.25, 0.28, 0.4]), Unit(7, [0.69, 0.27, 0.2, 0.05], "连接器"),
-    Unit(8, [0.335, 0.43, 0.02, 0.02]),                        # 两张卡片之间的小箭头
+    Unit(8, [0.335, 0.43, 0.02, 0.02]),                        # small arrow between two cards
     Unit(9, [0.05, 0.72, 0.9, 0.08], "缺一块都不算完整"),
     Unit(10, [0.9, 0.93, 0.05, 0.03], "05"),
 ]
@@ -53,7 +53,7 @@ check("卡片一行从左到右，横幅最后", texts == ["专家 面向一个�
 check("标题和页码常显", 0 in keep and 10 in keep, keep)
 check("两张卡片之间的箭头跟后一张卡片一起出现", 8 in items[1], items)
 
-# 左右两栏：左边三条，右边一个大块 → 先读完左栏
+# two columns: three items on the left, one large block on the right → finish the left column first
 units = [Unit(0, [0.05, 0.05, 0.6, 0.08], "标题", 1)]
 for r in range(3):
     units.append(Unit(len(units), [0.05, 0.25 + r * 0.2, 0.4, 0.15], f"左{r + 1}"))
@@ -62,13 +62,13 @@ _, items = R.group(units)
 check("左右两栏：先左栏从上到下，再右栏", [units[it[0]].text for it in items] == ["左1", "左2", "左3", "右边"],
       [units[it[0]].text for it in items])
 
-# 小标题跟它下面的第一条一起出现
+# a heading appears together with the first item below it
 units = [Unit(0, [0.05, 0.05, 0.6, 0.08], "标题", 1), Unit(1, [0.05, 0.22, 0.3, 0.04], "专项流程"),
          Unit(2, [0.05, 0.3, 0.25, 0.15], "需求评估"), Unit(3, [0.35, 0.3, 0.25, 0.15], "链路梳理")]
 _, items = R.group(units)
 check("小标题跟下面第一条一起出现", len(items) == 2 and items[0] == [1, 2], items)
 
-# 一个文本框里的要点（已经按段落拆成 unit）：各自一条，不合并
+# bullets of one text box (already split into units by paragraph): one item each, never merged
 units = [Unit(0, [0.05, 0.05, 0.6, 0.08], "标题", 1)] + \
         [Unit(1, [0.1, 0.25 + k * 0.08, 0.6, 0.06], f"要点{k}", 2, [k + 1]) for k in range(4)]
 _, items = R.group(units)
@@ -106,7 +106,7 @@ shots = storage.screenshots_dir(proj.id)
 W, H = 1920, 1080
 BG, COL = (245, 245, 245), [(220, 40, 40), (40, 160, 40), (40, 60, 220)]
 clean = Image.new("RGB", (W, H), BG)
-ImageDraw.Draw(clean).rectangle((100, 60, 1200, 160), fill=(30, 30, 30))      # 标题
+ImageDraw.Draw(clean).rectangle((100, 60, 1200, 160), fill=(30, 30, 30))      # title
 full = clean.copy()
 boxes = [(150, 300, 1750, 450), (150, 500, 1750, 650), (150, 700, 1750, 850)]
 for c, b in zip(COL, boxes):
@@ -289,7 +289,7 @@ def wait(j):
 pj = storage.load(proj.id)
 pj.settings["slides_reveal"] = True
 pj.steps[0].redactions = []
-pj.steps[0].narration = pj.steps[0].caption = nar          # 英文解说、中文页面
+pj.steps[0].narration = pj.steps[0].caption = nar          # English narration, Chinese slide
 pj.steps[0].boundaries = []
 storage.save(pj)
 orig_get = llm_mod.get_client

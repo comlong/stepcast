@@ -1,8 +1,8 @@
-"""两人问答：主持人提问、讲师讲解。
+"""Two-person Q&A: the host asks, the expert explains.
 
-- 两位讲者的默认音色（主持人女声、讲师男声）和名字（名字只在编辑器里区分是谁，不念、不上字幕）
-- 逐句配音：每句用说话人的音色合成，再按顺序拼成这一步的配音，记下每句的起止时间
-- 整理 AI 写的台词：去掉「晓晓：」「主持人：」这类说话人前缀和对名字的称呼
+- Default voices for the two speakers (female host, male expert) and their names (names only tell them apart in the editor; never spoken or shown in subtitles)
+- Line-by-line voice-over: each line is synthesised with its speaker's voice, joined in order into the step's voice-over, with each line's start and end recorded
+- Clean up AI-written lines: remove speaker prefixes such as "Xiaoxiao:" / "Host:" and names used to address the other speaker
 """
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ from ..models import Project, Speaker, Step
 from . import ffmpeg_util, tts
 
 ROLES = ("host", "expert")
-GAP = 0.22                   # 两句台词之间的停顿（秒）：接话要快，停太久就不像聊天了
-SYNTH_WORKERS = 4            # 一步里的几句台词同时合成
+GAP = 0.22                   # pause between two lines (seconds): replies come quickly; long pauses don't sound like a conversation
+SYNTH_WORKERS = 4            # lines of one step synthesised at the same time
 
-# 每种语言的男声。主持人默认用 tts.DEFAULT_VOICES 里的女声，讲师用这里的男声
+# Male voice per language. The host uses the female voice from tts.DEFAULT_VOICES by default, the expert the male voice here
 MALE_VOICES = {
     "zh-CN": "zh-CN-YunxiNeural", "zh-TW": "zh-TW-YunJheNeural",
     "en-US": "en-US-GuyNeural", "en-GB": "en-GB-RyanNeural",
@@ -44,18 +44,18 @@ MALE_VOICES = {
     "bg-BG": "bg-BG-BorislavNeural", "mk-MK": "mk-MK-AleksandarNeural", "sr-RS": "sr-RS-NicholasNeural",
     "uk-UA": "uk-UA-OstapNeural",
 }
-# 中文音色的中文名（编辑器里区分是谁说的）
+# Chinese names of the Chinese voices (to tell speakers apart in the editor)
 ZH_NAMES = {  # i18n: ignore
     "Xiaoxiao": "晓晓", "Xiaoyi": "晓伊", "Yunxi": "云希", "Yunjian": "云健", "Yunyang": "云扬",  # i18n: ignore
     "Yunxia": "云夏", "Xiaobei": "晓北", "Xiaoni": "晓妮", "HsiaoChen": "曉臻", "HsiaoYu": "曉雨",  # i18n: ignore
     "YunJhe": "雲哲", "HiuGaai": "曉佳", "HiuMaan": "曉曼", "WanLung": "雲龍",  # i18n: ignore
 }
-# AI 可能写在台词前面的说话人标签
+# speaker labels the AI may put in front of a line
 ROLE_LABELS = ("主持人", "讲师", "专家", "嘉宾", "老师", "问", "答",  # i18n: ignore
                "host", "expert", "moderator", "presenter", "teacher", "speaker a", "speaker b", "q", "a")
 
 
-# ---- 讲者 -----------------------------------------------------------------
+# ---- speakers -----------------------------------------------------------------
 
 def male_voice(lang: str) -> str:
     if lang in MALE_VOICES:
@@ -65,7 +65,7 @@ def male_voice(lang: str) -> str:
 
 
 def voice_name(voice: str) -> str:
-    """音色的人名：zh-CN-XiaoxiaoNeural → 晓晓，en-US-GuyNeural → Guy，qwen:Cherry → Cherry。"""
+    """The person name of a voice: zh-CN-XiaoxiaoNeural → 晓晓 (Xiaoxiao), en-US-GuyNeural → Guy, qwen:Cherry → Cherry."""
     from . import tts_cloud
     if tts_cloud.is_cloud(voice):
         return tts_cloud.voice_info(voice).get("short") or voice.split(":", 1)[1]
@@ -74,7 +74,7 @@ def voice_name(voice: str) -> str:
 
 
 def _speaks(voice: str, lang: str) -> bool:
-    """这个音色能不能说这种语言（商用服务的音色很多能说好几种语言）。"""
+    """Whether this voice can speak this language (many paid-service voices speak several)."""
     from . import tts_cloud
     base = lang.split("-")[0]
     if tts_cloud.is_cloud(voice):
@@ -90,7 +90,7 @@ def default_speakers(lang: str, host_voice: str = "", expert_voice: str = "") ->
 
 
 def ensure_speakers(proj: Project) -> List[Speaker]:
-    """两位讲者都齐（老数据、手改过的 JSON 缺了就按语言补上默认值）。"""
+    """Make sure both speakers exist (old data or hand-edited JSON missing them gets the defaults for the language)."""
     have = {sp.role: sp for sp in proj.speakers if sp.role in ROLES}
     if len(have) == 2 and all(sp.voice and sp.name for sp in have.values()):
         return [have["host"], have["expert"]]
@@ -111,7 +111,7 @@ def speaker(proj: Project, role: str) -> Speaker:
 
 
 def retarget(proj: Project, lang: str, host_voice: str = "") -> None:
-    """换语言：音色不是这种语言的换成这种语言的默认音色；名字还是默认名的跟着换（自己起的名字保留）。"""
+    """Switching language: voices not in that language become its default voices; default names change along (names you chose are kept)."""
     for sp in ensure_speakers(proj):
         if sp.role == "host" and host_voice:
             want = host_voice
@@ -126,7 +126,7 @@ def retarget(proj: Project, lang: str, host_voice: str = "") -> None:
 
 
 def speaker_names(proj: Project) -> List[str]:
-    """两位讲者的名字（包括音色本来的名字）：AI 写进台词里的称呼要去掉。"""
+    """Names of the two speakers (including the voices' own names): forms of address the AI writes into lines are removed."""
     out: List[str] = []
     for sp in proj.speakers:
         for n in (sp.name, voice_name(sp.voice)):
@@ -135,12 +135,12 @@ def speaker_names(proj: Project) -> List[str]:
     return out
 
 
-# ---- 逐句配音 ---------------------------------------------------------------
+# ---- line-by-line voice-over -------------------------------------------------------
 
 def synth_lines(proj: Project, step: Step, out_path: Path, rate: str = "",
                 volume: str = "") -> Tuple[float, List[Dict[str, Any]], List[List[float]]]:
-    """一步的台词逐句合成（每句用说话人的音色），拼成一段配音。
-    返回 (时长, 词边界, 每句的 [开始, 结束])。词边界已经换算到整段配音的时间上，字幕照样对得上。"""
+    """Synthesise a step's lines one by one (each with its speaker's voice) and join them into one voice-over.
+    Returns (duration, word boundaries, [start, end] of each line). Boundaries are already on the joined voice-over's timeline, so subtitles stay in sync."""
     lines = [ln for ln in step.lines if (ln.text or "").strip()]
     if not lines:
         raise tts.TTSError(i18n.t("解说文本为空。"))
@@ -180,26 +180,26 @@ def synth_lines(proj: Project, step: Step, out_path: Path, rate: str = "",
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-# ---- 整理台词 ---------------------------------------------------------------
+# ---- cleaning up lines ---------------------------------------------------------------
 
 def clean_text(text: str, names: Iterable[str] = ()) -> str:
-    """去掉句首的说话人前缀（「晓晓：」「主持人:」「【讲师】」）和对讲者名字的称呼（「云希，……」「……，晓晓？」）。
-    名字只用来在编辑器里区分是谁，不念出来、也不上字幕。"""
+    """Remove speaker prefixes at the start ("Xiaoxiao:", "Host:", "[Expert]") and names used to address a speaker ("Yunxi, …", "…, Xiaoxiao?").
+    Names only tell the speakers apart in the editor; they are never spoken or shown in subtitles."""
     names = [n for n in names if n]
     labels = sorted({*names, *ROLE_LABELS}, key=len, reverse=True)
     alt = "|".join(re.escape(x) for x in labels)
-    text = re.sub(rf"^\s*[\[【(（]\s*(?:{alt})\s*[\]】)）]\s*[：:]?\s*", "", text, flags=re.I)    # 【主持人】
-    text = re.sub(rf"^\s*(?:{alt})\s*[：:]\s*", "", text, flags=re.I)                           # 晓晓：
+    text = re.sub(rf"^\s*[\[【(（]\s*(?:{alt})\s*[\]】)）]\s*[：:]?\s*", "", text, flags=re.I)    # [Host]
+    text = re.sub(rf"^\s*(?:{alt})\s*[：:]\s*", "", text, flags=re.I)                           # Xiaoxiao:
     for n in sorted(names, key=len, reverse=True):
         e = re.escape(n)
-        text = re.sub(rf"(^|[。！？!?.；;]\s*){e}\s*[，,、]\s*", r"\1", text)          # 句首称呼
-        text = re.sub(rf"\s*[，,]\s*{e}\s*(?=[。！？!?.]|$)", "", text)                # 句尾称呼
+        text = re.sub(rf"(^|[。！？!?.；;]\s*){e}\s*[，,、]\s*", r"\1", text)          # name at the start of a sentence
+        text = re.sub(rf"\s*[，,]\s*{e}\s*(?=[。！？!?.]|$)", "", text)                # name at the end of a sentence
     return text.strip()
 
 
 def normalize_lines(raw: Any, names: Iterable[str] = (), clean: bool = False) -> List[Dict[str, str]]:
-    """AI 或编辑器给的台词整理成 [{"who", "text"}]：who 只认 host / expert（也认中文、英文别名），空句丢掉。
-    clean=True（AI 写的台词）时再去掉说话人前缀和对名字的称呼。"""
+    """Normalise lines from the AI or the editor to [{"who", "text"}]: who is only host / expert (Chinese and English aliases accepted); empty lines are dropped.
+    With clean=True (AI-written lines) speaker prefixes and forms of address are removed as well."""
     alias = {"host": "host", "主持人": "host", "moderator": "host", "q": "host",  # i18n: ignore
              "expert": "expert", "讲师": "expert", "专家": "expert", "teacher": "expert", "a": "expert"}  # i18n: ignore
     names = list(names)

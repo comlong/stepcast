@@ -1,4 +1,4 @@
-"""换语言：幻灯片项目按 PPT 原文重写（假 AI，不花钱），视频步骤和漏掉的页走翻译；网页录制项目整体翻译。"""
+"""Switching language: slide projects are rewritten from the deck (fake AI, no cost); video steps and missed slides are translated; recorded projects are translated as a whole."""
 import os
 import shutil
 import sys

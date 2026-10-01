@@ -1,8 +1,8 @@
-/* 扩展的界面语言：跟编辑器用同一个设置（服务端的 ui_language）。
+/* The extension's interface language: same setting as the editor (the server's ui_language).
  *
- * 译文随扩展打包在 locales/{lang}.json（由 tools/i18n_extract.py --sync-extension 从
- * static/locales 里挑出扩展用到的部分），所以服务没开时也能按上次的语言显示。
- * 中文原文就是 key；格式化规则和 static/i18n.js、backend/i18n.py 保持一致。
+ * Translations ship with the extension in locales/{lang}.json (picked from static/locales by
+ * tools/i18n_extract.py --sync-extension), so the last language is still shown when the service isn't running.
+ * The Chinese source text is the key; formatting rules match static/i18n.js and backend/i18n.py.
  */
 (function (global) {
   const LANGS = ['zh', 'en', 'de', 'fr', 'pl', 'it', 'es', 'nl'];
@@ -100,7 +100,7 @@
     }
   }
 
-  /** 读上次记住的语言（连上本地服务后会跟编辑器的设置同步）；第一次用默认英语。 */
+  /** Read the last remembered language (synced with the editor's setting once connected to the local service); English the first time. */
   async function init() {
     let saved = '';
     try { saved = (await chrome.storage.local.get('vt_ui_lang')).vt_ui_lang; } catch (e) { /* */ }
@@ -110,7 +110,7 @@
     return lang;
   }
 
-  /** 服务端的界面语言变了就跟着换。换了返回 true。 */
+  /** Follow the server's interface language when it changes. Returns true if it changed. */
   async function setLang(code) {
     const lang = normalize(code);
     if (!lang || lang === state.lang) return false;
@@ -127,7 +127,7 @@
 
   const norm = (s) => s.replace(/\s+/g, ' ').trim();
 
-  /** 翻译页面里的静态文字（和服务端 translate_html 同一套规则）。可重复调用：原文记在节点上。 */
+  /** Translate the static text on the page (same rules as the server's translate_html). Can be called repeatedly: the source text is kept on the node. */
   function translateDom(root) {
     root = root || document.body;
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);

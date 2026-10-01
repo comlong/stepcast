@@ -1,10 +1,10 @@
-"""粗判一段文字是什么语言（只需要分清「备注的语言和解说语言是不是同一种」）。
+"""Roughly detect the language of a text (only needed to tell whether "the notes and the narration are in the same language").
 
-按文字系统：假名 → ja，谚文 → ko，汉字 → zh，希腊字母 → el，泰文、阿拉伯文、天城文；
-西里尔字母再按特有的字母分俄 / 乌克兰 / 保加利亚 / 塞尔维亚 / 马其顿文，分不出来返回 cyrl；
-拉丁字母的语言按常用虚词数一数。判断不出来返回空字符串。
+By script: kana → ja, hangul → ko, han → zh, Greek letters → el, Thai, Arabic, Devanagari;
+Cyrillic is further told apart by characteristic letters (Russian / Ukrainian / Bulgarian / Serbian / Macedonian), cyrl if undecidable;
+Latin-script languages are scored by counting common function words. Returns an empty string if undecidable.
 
-static/app.js 的 guessLang / sameLang 是同一套规则，改这里要一起改（tests/test_languages.py 会对比）。
+guessLang / sameLang in static/app.js implement the same rules; change both together (tests/test_languages.py compares them).
 """
 from __future__ import annotations
 
@@ -46,13 +46,13 @@ _STOP: Dict[str, Set[str]] = {k: set(v.split()) for k, v in {
     "sl": "in je v na da se so za od ki ali kot pa z iz tudi ni bi to",
     "sq": "dhe në të që është një për me nga i e janë por si nuk ka do",
     "ca": "el la els les i que de per amb una un no és del als més són aquest",
-    "gl": "unha non con en un máis ou polo pola polos polas tamén moi cando xa",   # 和葡萄牙语共有的虚词不算
+    "gl": "unha non con en un máis ou polo pola polos polas tamén moi cando xa",   # function words shared with Portuguese don't count
     "ga": "agus an na is tá ar le sa go ag i don seo sin atá níl bhí mar",
     "cy": "a y yr ac yn mae i o ar ei eu wedi hwn hon gyda am ond roedd fel",
     "mt": "il l u ta li fil tal biex huwa hija għal minn ma din dan jew kif wkoll",
     "tr": "ve bir bu da de için ile olarak çok daha ne gibi var ama en olan kadar mı",
 }.items()}
-# 靠虚词分不太清的近亲语言：判断成其中一种时，对同组的其他语言也算「同一种」（宁可照念，不乱改）
+# Closely related languages that function words can't separate well: detecting one of them counts as "the same" for the others in its group (better to read the notes than rewrite them by mistake)
 _FAMILIES = [{"da", "nb", "sv"}, {"cs", "sk"}, {"hr", "bs", "sr", "sl"}, {"gl", "pt"}, {"sr", "mk"}]
 CYRILLIC = {"ru", "uk", "bg", "sr", "mk"}
 _SR = set("је шта овај ова који која ће сам".split())
@@ -60,7 +60,7 @@ _MK = set("е што овој оваа кој која ќе сум".split())
 
 
 def related(a: str, b: str) -> bool:
-    """两个基础语言代码算不算同一种：相同、近亲，或者一边是「分不清的西里尔文」另一边是用西里尔字母的语言。"""
+    """Whether two base language codes count as the same: identical, closely related, or one is "undecidable Cyrillic" and the other a Cyrillic-script language."""
     if a == b:
         return True
     if "cyrl" in (a, b):
@@ -80,7 +80,7 @@ def _cyrillic(text: str) -> str:
         return "mk"
     if has("ђћ"):
         return "sr"
-    if has("јљњџ"):                                  # 塞尔维亚文、马其顿文都有这几个字母：数常用词
+    if has("јљњџ"):                                  # Serbian and Macedonian both use these letters: count common words
         words = re.findall(r"[^\W\d_]+", t)
         mk = sum(w in _MK for w in words)
         return "mk" if mk > sum(w in _SR for w in words) else "sr"
@@ -92,7 +92,7 @@ def _cyrillic(text: str) -> str:
 
 
 def detect(text: str) -> str:
-    """文字的语言（基础代码，比如 zh、en）；西里尔字母分不出具体语言时是 cyrl；太短或判断不出来返回 ''。"""
+    """Language of the text (base code such as zh, en); cyrl for Cyrillic that can't be pinned down; '' if too short or undecidable."""
     text = text or ""
     letters = sum(1 for ch in text if ch.isalpha())
     if letters < 12:
@@ -101,20 +101,20 @@ def detect(text: str) -> str:
         n = len(rx.findall(text))
         if n >= max(4, letters * 0.2):
             if code == "zh" and _SCRIPTS[0][1].search(text):
-                return "ja"                            # 汉字里夹着假名的是日文
+                return "ja"                            # han mixed with kana is Japanese
             return _cyrillic(text) if code == "cyrl" else code
     words = re.findall(r"[^\W\d_]+", text.lower())
     if len(words) < 5:
         return ""
     scores = sorted(((sum(1 for w in words if w in stop) / len(words), code) for code, stop in _STOP.items()),
-                    key=lambda x: (-x[0], x[1]))       # 分数一样时按代码字母排，和 app.js 一致
+                    key=lambda x: (-x[0], x[1]))       # equal scores are ordered by code, same as app.js
     best, code = scores[0]
-    # 和「不是近亲的第二名」比：丹麦语 / 挪威语这种分不太清的，只要确定是这一组就行
+    # compare with the best "not closely related" runner-up: for Danish / Norwegian, which are hard to separate, knowing the group is enough
     rival = next((s for s, c in scores[1:] if not related(c, code)), 0.0)
     return code if best >= 0.06 and best >= rival * 1.3 else ""
 
 
 def same_language(text: str, lang: str) -> bool:
-    """这段文字是不是这种语言（lang 可以是 zh-CN 这种完整代码）。判断不出来就当作是（不乱改）。"""
+    """Whether the text is in this language (lang may be a full code such as zh-CN). Undecidable counts as yes (better not to change anything)."""
     got = detect(text)
     return not got or related(got, (lang or "").split("-")[0].lower())

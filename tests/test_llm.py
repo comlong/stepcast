@@ -1,6 +1,6 @@
-"""多家大模型接入：配置保存、OpenAI 兼容协议、Claude（SDK + 流式）、停止、端到端生成解说。
+"""Multiple LLM providers: saving settings, OpenAI-compatible protocol, Claude (SDK + streaming), stopping, writing narration end to end.
 
-全程用本机假服务器，不联网、不花任何额度。
+Uses local fake servers throughout: no internet, no credits spent.
 """
 import json
 import os
@@ -29,8 +29,8 @@ from backend import config, main, storage  # noqa: E402
 from backend.services import jobs, llm, llm_openai, script_gen  # noqa: E402
 import selftest  # noqa: E402
 
-config.CONFIG_PATH = DATA / "config.json"     # 不碰真实的 config.json
-config.DEFAULTS["ui_language"] = "zh"      # 下面按中文报错文字核对
+config.CONFIG_PATH = DATA / "config.json"     # never touch the real config.json
+config.DEFAULTS["ui_language"] = "zh"      # error messages below are checked in Chinese
 config._cache = None
 
 c = TestClient(main.app, base_url="http://127.0.0.1:8756", headers={"Origin": "http://127.0.0.1:8756"})
@@ -71,10 +71,10 @@ SCRIPT_REPLY = {"title": "假模型标题", "subtitle": "副标题", "intro": "�
                            "caption": f"假模型写的第 {i} 步解说。"} for i in range(3)]}
 
 
-# ================================================================ 假 OpenAI 兼容服务
+# ================================================================ fake OpenAI-compatible service
 class OAI(BaseHTTPRequestHandler):
     log = []
-    script = []          # 依次返回的 (status, body)；空了就正常回答
+    script = []          # (status, body) returned in turn; when empty, answer normally
 
     def log_message(self, *a):
         pass
@@ -111,7 +111,7 @@ class OAI(BaseHTTPRequestHandler):
                                       "finish_reason": "stop"}]})
 
 
-# ================================================================ 假 Claude（Messages API，SSE 流式）
+# ================================================================ fake Claude (Messages API, SSE streaming)
 class ANT(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     log = []
@@ -179,7 +179,7 @@ class ANT(BaseHTTPRequestHandler):
             return
         system = body.get("system", "")
         text = json.dumps(SCRIPT_REPLY, ensure_ascii=False) if "JSON" in system else "Claude 改写后的解说。"
-        for i in range(0, len(text), 40):         # 分片发送，验证流式拼接
+        for i in range(0, len(text), 40):         # send in chunks to verify streaming reassembly
             self._event("content_block_delta", {"type": "content_block_delta", "index": 0,
                                                 "delta": {"type": "text_delta", "text": text[i:i + 40]}})
         self._event("content_block_stop", {"type": "content_block_stop", "index": 0})
@@ -197,7 +197,7 @@ def serve(handler):
 oai_srv, OAI_URL = serve(OAI)
 ant_srv, ANT_URL = serve(ANT)
 
-# ---------------------------------------------------------------- 1. 老配置兼容
+# ---------------------------------------------------------------- 1. old settings stay compatible
 print("\n== 1. 老版本只配了 DeepSeek 的用户，升级后照常能用 ==")
 reset_config()
 config.CONFIG_PATH.write_text(json.dumps({"deepseek_api_key": "sk-legacy-1234567890abcdef",
@@ -217,7 +217,7 @@ check("只给掩码", ds["key_masked"] == "sk-leg…cdef", ds["key_masked"])
 check("列出 12 家服务商（含豆包、通义、GLM、MiniMax）", [p["id"] for p in s["llm"]["providers"]] ==
       ["deepseek", "doubao", "qwen", "glm", "minimax", "openai", "anthropic", "mistral", "gemini", "azure", "ollama", "custom"])
 
-# ---------------------------------------------------------------- 2. 保存设置
+# ---------------------------------------------------------------- 2. saving settings
 print("\n== 2. 切换服务商、保存 Key ==")
 s = save_settings({"llm_provider": "mistral",
                    "llm_providers": {"mistral": {"api_key": "mk-secret-abcdefghijklmnop", "model": "mistral-small-latest"}}})
@@ -257,7 +257,7 @@ except llm.LLMError as e:
     check("Azure 缺接口地址报错", "接口地址" in str(e), str(e))
 check("本地 Ollama 不需要 Key", llm.get_client("ollama").model == "qwen3:8b")
 
-# ---------------------------------------------------------------- 4. OpenAI 兼容协议
+# ---------------------------------------------------------------- 4. OpenAI-compatible protocol
 print("\n== 4. OpenAI 兼容协议（OpenAI / Azure / 自定义）==")
 OAI.log.clear()
 cl = llm.get_client("openai", api_key="sk-oai-test", base_url=OAI_URL + "/v1", model="gpt-5-mini")
@@ -362,7 +362,7 @@ check("模型名写错时提示", not r["ok"] and "claude-opus-9" in r["message"
 r = llm.list_models("anthropic", api_key="sk-ant-test", base_url=ANT_URL)
 check("Claude 模型列表", r["ok"] and r["models"] == ["claude-opus-5", "claude-sonnet-5"], r)
 
-# ---------------------------------------------------------------- 6. 停止
+# ---------------------------------------------------------------- 6. stopping
 print("\n== 6. 生成中点停止 ==")
 ANT.mode = "slow"
 ANT.disconnected.clear()
@@ -384,7 +384,7 @@ check("Claude 流式生成中停止，1 秒内停下", jobs.get(j["id"])["status
 check("连接被关掉，服务端不再继续生成", ANT.disconnected.wait(3))
 ANT.mode = "ok"
 
-# ---------------------------------------------------------------- 7. 端到端
+# ---------------------------------------------------------------- 7. end to end
 print("\n== 7. 端到端：在设置里换服务商后生成解说、AI 改写 ==")
 reset_config()
 save_settings({"llm_provider": "custom", "llm_providers": {"custom": {"base_url": OAI_URL + "/v1", "model": "fake-large"}}})

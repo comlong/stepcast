@@ -38,7 +38,7 @@ button.blue { background: var(--accent2); color: #fff; font-weight: 600; }
 button.blue:hover:not(:disabled) { filter: brightness(1.1); background: var(--accent2); }
 button.sm { padding: 4px 9px; font-size: 12px; border-radius: 6px; }
 button.danger:hover:not(:disabled) { background: #48222a; color: #ff9c9c; }
-/* 下载用真正的链接（按钮套在 <a> 里是无效 HTML，有的浏览器点了不下载），样子和按钮一致 */
+/* Downloads use real links (a button inside <a> is invalid HTML and some browsers don't download), styled like buttons */
 a.btn { display: inline-block; cursor: pointer; border-radius: 8px; background: var(--panel2); color: var(--text);
         padding: 7px 13px; text-decoration: none; white-space: nowrap; transition: background .15s, filter .15s; }
 a.btn:hover { background: #232b37; }
@@ -60,7 +60,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
 .small { font-size: 12px; }
 .hidden { display: none !important; }
 
-/* ---------- 布局 ---------- */
+/* ---------- layout ---------- */
 
 #app { display: flex; flex-direction: column; height: 100%; }
 
@@ -89,7 +89,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
 
 #main { flex: 1; display: flex; min-height: 0; }
 
-/* 左：步骤列表 */
+/* left: step list */
 #steps {
   width: 236px; flex: none; background: var(--panel);
   border-right: 1px solid var(--line); display: flex; flex-direction: column;
@@ -142,13 +142,13 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
 .k-key { background: #f0b03c; }
 .k-manual { background: var(--muted); }
 
-/* 中：预览 */
+/* center: preview */
 #stage { flex: 1; min-width: 0; display: flex; flex-direction: column; background: #0a0d11; }
 #stageHead {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--line); flex: none; background: var(--panel);
 }
-/* 按钮文字不折行（德语、波兰语的词比中文长），让提示文字去换行 */
+/* button text doesn't wrap (German and Polish words are longer than Chinese); let the hint text wrap instead */
 #stageHead button, #actions button, #topbar button { white-space: nowrap; }
 #stageHint { min-width: 0; flex: 1 1 160px; line-height: 1.35; }
 #stageHead > .grow { flex: 0 0 0; }
@@ -173,7 +173,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
   position: absolute; top: -24px; left: 0; font-size: 11px; white-space: nowrap;
   background: var(--accent); color: #fff; padding: 1px 6px; border-radius: 4px;
 }
-/* 打码框 */
+/* redaction boxes */
 #redactLayer { position: absolute; inset: 0; pointer-events: none; }
 #redactLayer.on { pointer-events: auto; cursor: crosshair; background: rgba(0, 0, 0, .04); }
 .rbox {
@@ -216,7 +216,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
 #emptyState h2 { color: var(--text); font-size: 18px; margin-bottom: 6px; }
 #emptyState ol { text-align: left; line-height: 1.9; }
 
-/* 右：属性 */
+/* right: properties */
 #inspector {
   width: 330px; flex: none; background: var(--panel);
   border-left: 1px solid var(--line); overflow-y: auto; padding: 12px;
@@ -231,7 +231,7 @@ label.field > span { display: block; font-size: 11.5px; color: var(--muted); mar
 .switch { display: flex; align-items: center; gap: 7px; font-size: 12.5px; margin-bottom: 7px; }
 .switch input { width: auto; }
 
-/* 底部操作条 */
+/* bottom action bar */
 #actions {
   flex: none; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 9px 14px; background: var(--panel); border-top: 1px solid var(--line);
@@ -247,7 +247,7 @@ button.stop:hover:not(:disabled) { background: #52252c; color: #ffc2c2; }
 #progressText { font-size: 11.5px; color: var(--muted); margin-top: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 弹窗 */
+/* dialogs */
 .modal {
   position: fixed; inset: 0; background: rgba(4,6,9,.7); display: grid;
   place-items: center; z-index: 50; padding: 20px;
@@ -258,7 +258,7 @@ button.stop:hover:not(:disabled) { background: #52252c; color: #ffc2c2; }
   box-shadow: 0 30px 80px rgba(0,0,0,.6);
 }
 .modal .box.wide { width: 900px; }
-/* 视频弹窗：窗口不高时压低视频，下载按钮始终在可见范围内，不用在弹窗里往下滚 */
+/* video dialog: on short windows shrink the video so the download buttons stay visible without scrolling in the dialog */
 #vPlayer { display: block; max-height: calc(88vh - 150px); }
 .modal h2 { margin: 0 0 14px; font-size: 17px; }
 .modal .foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
@@ -289,7 +289,7 @@ button.stop:hover:not(:disabled) { background: #52252c; color: #ffc2c2; }
 ::-webkit-scrollbar-thumb { background: #2a3341; border-radius: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
-/* ---------- 配音 / 录音 ---------- */
+/* ---------- voice-over / recording ---------- */
 .field-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
 .field-head > span { font-size: 11.5px; color: var(--muted); }
 button.xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
@@ -318,7 +318,7 @@ button.xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
 .meter > i { display: block; height: 100%; width: 0; transition: width .06s;
              background: linear-gradient(90deg, #30c463, #f0b03c, #ff5c39); }
 
-/* ---------- PPT 导入 ---------- */
+/* ---------- PPT import ---------- */
 .drop { display: block; border: 2px dashed #323b4a; border-radius: 12px; padding: 36px 20px;
         text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
 .drop:hover, .drop.over { border-color: var(--accent); background: rgba(255, 92, 57, .05); }
@@ -347,7 +347,7 @@ button.xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
 .k-video { background: #b37feb; }
 .badge.ppt { color: #22b8cf; }
 
-/* 两人问答：台词编辑、讲者 */
+/* two-person Q&A: dialogue editing, speakers */
 .dlg-lines { display: flex; flex-direction: column; gap: 6px; }
 .dlg-row { display: grid; grid-template-columns: 64px 1fr auto; gap: 6px; align-items: start; }
 .dlg-row textarea { min-height: 38px; resize: vertical; }
@@ -364,7 +364,7 @@ button.xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
 .spk-card[data-role="expert"] .spk-head b { color: #6fa0ff; }
 @media (max-width: 560px) { .spk-grid { grid-template-columns: 1fr; } }
 
-/* 视频弹窗：第二语言字幕 */
+/* video dialog: second-language subtitles */
 .v-stage { position: relative; background: #000; border-radius: 10px; overflow: hidden; }
 .v-stage video { display: block; width: 100%; background: #000; }
 .v-stage:fullscreen { border-radius: 0; display: flex; align-items: center; }

@@ -1,6 +1,6 @@
-/* 边录边讲的录音端。
- * 由 background 创建为 offscreen document，接收 mic_start / mic_stop 指令。
- * 停止时把整段录音连同「开始录音的时刻」一起上传，服务端据此把话分配到每个操作步骤。
+/* Recording side of "narrate while recording".
+ * Created by the background as an offscreen document; receives mic_start / mic_stop.
+ * On stop, the whole recording is uploaded together with the moment recording started, so the server can assign the speech to the action steps.
  */
 let recorder = null;
 let stream = null;

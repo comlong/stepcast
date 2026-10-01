@@ -1,4 +1,4 @@
-"""全局配置：从 config.json 读取，支持环境变量覆盖。"""
+"""Global settings: read from config.json, overridable by environment variables."""
 from __future__ import annotations
 
 import json
@@ -9,12 +9,12 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-# 打包成 exe（PyInstaller）后：代码和静态资源在 exe 旁边的 _internal 里，
-# 配置、项目、上传的文件放在 exe 所在的文件夹 —— 整个文件夹拷走就是一份完整的软件和数据。
+# When packaged as an exe (PyInstaller): code and static files are in _internal next to the exe;
+# settings, projects and uploads live in the exe's folder — copying that folder copies the complete software and data.
 FROZEN = bool(getattr(sys, "frozen", False))
 SOURCE_DIR = Path(__file__).resolve().parent.parent
 RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", SOURCE_DIR))
-INSTALL_DIR = Path(sys.executable).resolve().parent if FROZEN else SOURCE_DIR   # extension 文件夹在这里
+INSTALL_DIR = Path(sys.executable).resolve().parent if FROZEN else SOURCE_DIR   # the extension folder is here
 
 
 def _writable(d: Path) -> bool:
@@ -29,11 +29,11 @@ def _writable(d: Path) -> bool:
 
 
 def pick_home(install_dir: Path, frozen: bool) -> Path:
-    """放配置和项目的目录。exe 放在没有写权限的地方（如 C:\\Program Files）时，改存到用户目录。"""
+    """Folder for settings and projects. If the exe sits somewhere without write access (e.g. C:\\Program Files), use the user folder instead."""
     if not frozen or _writable(install_dir):
         return install_dir
     base = Path(os.environ.get("LOCALAPPDATA") or Path.home())
-    # 1.3 之前软件叫 VideoTutorial：旧目录里已经有数据、新目录还没建时接着用旧的，升级不丢项目
+    # before 1.3 the software was called VideoTutorial: if the old folder has data and the new one doesn't exist yet, keep using the old one so upgrades don't lose projects
     legacy, home = base / "VideoTutorial", base / "StepCast"
     return legacy if legacy.exists() and not home.exists() else home
 
@@ -44,25 +44,25 @@ DATA_DIR = Path(os.environ.get("VT_DATA_DIR", BASE_DIR / "projects"))
 STATIC_DIR = RESOURCE_DIR / "static"
 
 DEFAULTS: Dict[str, Any] = {
-    # 大模型：llm_provider 选哪家，llm_providers[家] = {api_key, base_url, model}
+    # LLM: llm_provider picks the provider, llm_providers[provider] = {api_key, base_url, model}
     "llm_provider": "deepseek",
     "llm_providers": {},
-    # 商用配音服务：tts_services[doubao | minimax | qwen] = {api_key, voices（自己的音色 ID）, model}
+    # paid voice services: tts_services[doubao | minimax | qwen] = {api_key, voices (your own voice IDs), model}
     "tts_services": {},
-    # 老版本只支持 DeepSeek 时的字段，仍然有效
+    # fields from old versions that only supported DeepSeek; still valid
     "deepseek_api_key": "",
     "deepseek_base_url": "https://api.deepseek.com",
     "deepseek_model": "deepseek-chat",
-    "ui_language": "en",          # 界面（工作）语言 zh/en/de/fr/pl/it/es/nl；没设置过一律英语
-    "language": "en-US",          # 解说语言
+    "ui_language": "en",          # interface (working) language zh/en/de/fr/pl/it/es/nl; English if never set
+    "language": "en-US",          # narration language
     "voice": "en-US-AriaNeural",
     "tts_rate": "+0%",
     "tts_volume": "+0%",
     "video_width": 1920,
     "video_height": 1080,
     "video_fps": 30,
-    # 渲染速度：video_encoder = auto(有显卡就用显卡编码) | cpu | nvenc | qsv | amf
-    # render_workers = 同时渲染几段，0 = 按 CPU 核数自动
+    # rendering speed: video_encoder = auto (GPU encoding when available) | cpu | nvenc | qsv | amf
+    # render_workers = segments rendered at once, 0 = automatic by CPU count
     "video_encoder": "auto",
     "render_workers": 0,
     "accent_color": "#FF5C39",
@@ -71,7 +71,7 @@ DEFAULTS: Dict[str, Any] = {
     "zoom_factor": 1.35,
     "dim_background": True,
     "burn_subtitles": True,
-    "second_sub_space": True,       # 主字幕往上挪一点，在画面最底下给第二语言字幕（外挂）留位置
+    "second_sub_space": True,       # move the main subtitle up a little and leave the very bottom for second-language subtitles (external)
     "show_cursor": True,
     "show_step_badge": True,
     "browser_frame": True,
@@ -81,11 +81,11 @@ DEFAULTS: Dict[str, Any] = {
     "outro_enabled": True,
     "server_port": 8756,
     "font_path": "",
-    # 语音识别（本地 faster-whisper）
+    # speech recognition (local faster-whisper)
     "asr_model": "small",          # tiny | base | small | medium | large-v3
     "asr_device": "auto",          # auto | cpu | cuda
-    "hf_endpoint": "",             # HuggingFace 镜像，如 https://hf-mirror.com
-    "asr_remove_fillers": True,    # 去掉「嗯/啊/呃」等口头禅
+    "hf_endpoint": "",             # HuggingFace mirror, e.g. https://hf-mirror.com
+    "asr_remove_fillers": True,    # remove filler words ("um", "uh" …)
 }
 
 _lock = threading.Lock()
@@ -102,7 +102,7 @@ def _read_file() -> Dict[str, Any]:
 
 
 def load() -> Dict[str, Any]:
-    """返回完整配置（默认值 + 文件 + 环境变量）。"""
+    """The complete settings (defaults + file + environment variables)."""
     global _cache
     with _lock:
         if _cache is None:
@@ -121,7 +121,7 @@ def get(key: str, default: Any = None) -> Any:
 
 
 def save(patch: Dict[str, Any]) -> Dict[str, Any]:
-    """合并写入 config.json（只保留已知字段）。"""
+    """Merge into config.json (only known fields are kept)."""
     global _cache
     with _lock:
         cfg = dict(DEFAULTS)
@@ -141,9 +141,9 @@ def ensure_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# ---- 字体 ----------------------------------------------------------------
+# ---- fonts -------------------------------------------------------------------
 _FONT_CANDIDATES = [
-    r"C:\Windows\Fonts\msyh.ttc",      # 微软雅黑
+    r"C:\Windows\Fonts\msyh.ttc",      # Microsoft YaHei
     r"C:\Windows\Fonts\msyhbd.ttc",
     r"C:\Windows\Fonts\simhei.ttf",
     r"C:\Windows\Fonts\segoeui.ttf",
@@ -153,7 +153,7 @@ _FONT_CANDIDATES = [
 
 
 def font_path(bold: bool = False) -> str:
-    """找一个能显示中文的 TTF/TTC 字体。"""
+    """Find a TTF/TTC font that can display Chinese."""
     custom = get("font_path")
     if custom and Path(custom).exists():
         return custom

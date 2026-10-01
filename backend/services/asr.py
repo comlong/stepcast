@@ -1,10 +1,10 @@
-"""本地语音识别：faster-whisper。
+"""Local speech recognition: faster-whisper.
 
-音频不出本机。模型按这个顺序找：
-1. 程序旁边的 models/faster-whisper-<型号>/ —— 手动放进来的（国内网络、公司防火墙下载不了时用）
-2. HuggingFace 缓存（~/.cache/huggingface）里已经下好的
-3. 都没有就下载：先试官方源，连不上自动改用国内镜像 hf-mirror.com（设置里填了镜像就先用它）
-small 约 460MB，只下一次，之后离线可用。
+Audio never leaves this computer. The model is looked up in this order:
+1. models/faster-whisper-<size>/ next to the program — placed there by hand (for networks that can't download it, e.g. mainland China or company firewalls)
+2. already downloaded in the HuggingFace cache (~/.cache/huggingface)
+3. otherwise download it: the official source first, then the China mirror hf-mirror.com if that can't be reached (a mirror set in the settings is tried first)
+small is about 460 MB, downloaded once and usable offline afterwards.
 """
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ class ASRError(RuntimeError):
     pass
 
 
-_WHISPER_ALIAS = {"nb": "no"}     # 挪威语（书面挪威语 nb-NO）在 Whisper 里叫 no
+_WHISPER_ALIAS = {"nb": "no"}     # Norwegian (written Bokmål, nb-NO) is called "no" in Whisper
 
 
 def whisper_lang(code: str) -> Optional[str]:
-    """zh-CN -> zh；空、auto 或模型不认识的语言（比如爱尔兰语）返回 None（让模型自己判断）。"""
+    """zh-CN -> zh; empty, auto, or a language the model doesn't know (e.g. Irish) returns None (the model detects it)."""
     code = (code or "").strip()
     if not code or code == "auto":
         return None
@@ -65,7 +65,7 @@ def _hf_cache_dir() -> Path:
 
 OFFICIAL = "https://huggingface.co"
 CN_MIRROR = "https://hf-mirror.com"
-# 只下 CTranslate2 推理要用的文件（仓库里还有别的格式，用不上）
+# download only the files CTranslate2 inference needs (the repository has other formats we don't use)
 _FILES = ["config.json", "model.bin", "tokenizer.json", "vocabulary.*", "preprocessor_config.json"]
 
 
@@ -74,7 +74,7 @@ def _repo(name: str) -> str:
 
 
 def offline_dirs(name: str) -> List[Path]:
-    """手动放模型的位置：exe（或源码）旁边的 models 文件夹。"""
+    """Where models are placed by hand: the models folder next to the exe (or the source)."""
     roots = []
     for r in (config.INSTALL_DIR, config.BASE_DIR):
         if r not in roots:
@@ -97,7 +97,7 @@ def _cached_snapshot(name: str) -> Optional[Path]:
 
 
 def local_model(name: str) -> Optional[Path]:
-    """本机已有的模型目录（手动放的优先，其次是下载缓存）；没有返回 None。"""
+    """Model folder available on this computer (placed by hand first, then the download cache); None if there is none."""
     for d in offline_dirs(name):
         if _complete(d):
             return d
@@ -123,7 +123,7 @@ def status() -> Dict[str, Any]:
 
 
 def _endpoints() -> List[str]:
-    """下载源的尝试顺序：设置里填的镜像 → 官方源 → 国内镜像。"""
+    """Order of download sources: mirror from the settings → official source → China mirror."""
     order: List[str] = []
     mirror = (config.get("hf_endpoint") or "").strip().rstrip("/")
     for ep in (mirror, OFFICIAL, CN_MIRROR):
@@ -133,7 +133,7 @@ def _endpoints() -> List[str]:
 
 
 def _reachable(endpoint: str, name: str, timeout: float = 6.0) -> bool:
-    """先轻轻问一下这个源能不能连上，免得在国内对着官方源干等好几分钟。"""
+    """Quickly check whether this source can be reached, so we don't wait minutes for the official source from mainland China."""
     import requests
     try:
         r = requests.get(f"{endpoint}/api/models/{_repo(name)}", timeout=timeout)
@@ -143,10 +143,10 @@ def _reachable(endpoint: str, name: str, timeout: float = 6.0) -> bool:
 
 
 def _download(name: str, progress: Progress = None) -> Path:
-    """下载模型，返回模型目录。
+    """Download the model and return its folder.
 
-    直接调 snapshot_download 并传 endpoint：huggingface_hub 在导入时就把下载地址读死了，
-    事后再设 HF_ENDPOINT 环境变量不起作用（以前「模型镜像」设置因此无效）。
+    Call snapshot_download directly with endpoint: huggingface_hub reads the download URL once at import time,
+    so setting HF_ENDPOINT afterwards has no effect (which is why the "model mirror" setting used to do nothing).
     """
     from huggingface_hub import constants, snapshot_download
     total_mb = MODEL_SIZES_MB.get(name, 0)
@@ -159,7 +159,7 @@ def _download(name: str, progress: Progress = None) -> Path:
         if progress:
             progress(0.02, i18n.t("首次使用，正在从 {host} 下载语音识别模型 {model}（约 {mb}MB，只需一次）…",
                                   host=host, model=name, mb=total_mb or "?"))
-        # 镜像站不支持 HuggingFace 新的 Xet 传输协议（它的服务器在国内也连不上），走普通 HTTP 下载
+        # mirrors don't support HuggingFace's new Xet transfer protocol (its servers can't be reached from mainland China either), so use plain HTTP downloads
         xet_before = constants.HF_HUB_DISABLE_XET
         constants.HF_HUB_DISABLE_XET = xet_before or ep != OFFICIAL
         stop = threading.Event()
@@ -185,7 +185,7 @@ def _download(name: str, progress: Progress = None) -> Path:
 
 def _watch_download(name: str, host: str, total_mb: int, progress: Progress,
                     stop: threading.Event) -> None:
-    """下载时每秒看一眼缓存目录有多大，把进度报给界面（几百 MB 要下好几分钟）。"""
+    """While downloading, check the cache folder size every second and report progress to the UI (hundreds of MB take minutes)."""
     if not progress:
         return
     blobs = _hf_cache_dir() / f"models--Systran--faster-whisper-{name}" / "blobs"
@@ -199,11 +199,11 @@ def _watch_download(name: str, host: str, total_mb: int, progress: Progress,
             progress(0.02 + 0.07 * frac, i18n.t("正在从 {host} 下载语音识别模型：{done} / {total} MB",
                                                 host=host, done=int(done), total=total_mb or "?"))
         except BaseException:
-            return        # 用户点了停止：进度回调会抛 JobCancelled，这里只负责不再汇报
+            return        # the user clicked Stop: the progress callback raises JobCancelled; here we just stop reporting
 
 
 def get_model(progress: Progress = None):
-    """加载（必要时下载）模型，进程内复用。"""
+    """Load the model (downloading it if needed), reused within the process."""
     global _model, _model_key
     if not installed():
         raise ASRError(i18n.t("未安装语音识别组件，请执行：pip install faster-whisper"))
@@ -223,7 +223,7 @@ def get_model(progress: Progress = None):
         from faster_whisper import WhisperModel
         try:
             _model = WhisperModel(
-                str(path),                    # 传本地目录：加载时不再联网
+                str(path),                    # pass a local folder: no network access while loading
                 device=device if device != "auto" else "auto",
                 compute_type="int8",
             )
@@ -236,14 +236,14 @@ def get_model(progress: Progress = None):
         return _model
 
 
-# ---- 文本清洗 -------------------------------------------------------------
+# ---- text cleanup -------------------------------------------------------------
 
 _ZH_FILLERS = r"(?:嗯+|啊+|呃+|额+|唔+|哦+|诶+|那个那个|就是说|然后呢)"  # i18n: ignore
 _EN_FILLERS = r"(?:um+|uh+|erm+|hmm+|you know|i mean)"
 
 
 def clean_text(text: str, language: str = "zh") -> str:
-    """去口头禅、统一标点。只删句首/逗号间独立出现的填充词，不碰正常用词。"""
+    """Remove filler words and normalise punctuation. Only fillers standing alone at the start of a sentence or between commas are removed, never normal words."""
     t = (text or "").strip()
     if not t:
         return ""
@@ -253,7 +253,7 @@ def clean_text(text: str, language: str = "zh") -> str:
             t = re.sub(rf"(^|[，,。！？!?；;\s])\s*{_ZH_FILLERS}\s*[，,。]?\s*", r"\1", t)
         else:
             t = re.sub(rf"(^|[,.!?;]\s*)\b{_EN_FILLERS}\b[,.]?\s*", r"\1", t, flags=re.I)
-        # 口吃式重复：「我们我们」「the the」。单字叠词（看看、谢谢、慢慢）是正常中文，不动
+        # stutter repeats such as "we we" or "the the". Single-character reduplication in Chinese (kankan, xiexie, manman) is normal and kept
         t = re.sub(r"(?<!一)((?!一)[一-鿿]{2,3})\1", r"\1", t)  # i18n: ignore
         t = re.sub(r"\b(\w+)\s+\1\b", r"\1", t, flags=re.I)
     if lang in ("zh", "ja"):
@@ -271,18 +271,18 @@ def clean_text(text: str, language: str = "zh") -> str:
     return t
 
 
-# ---- 识别 ----------------------------------------------------------------
+# ---- recognition ----------------------------------------------------------------
 
 def transcribe(path: str | Path, language: str = "", progress: Progress = None,
                words: bool = True) -> Dict[str, Any]:
-    """返回 {duration, language, text, segments:[{start,end,text,words:[{w,start,end}]}]}。"""
+    """Returns {duration, language, text, segments:[{start,end,text,words:[{w,start,end}]}]}."""
     path = str(path)
     if not os.path.exists(path):
         raise ASRError(i18n.t("音频文件不存在"))
     model = get_model(progress)
     if progress:
         progress(0.12, i18n.t("识别语音中…"))
-    # whisper 的 zh 不分简繁，经常混出繁体字；用对应字形的提示句把它拉回来
+    # whisper's zh doesn't distinguish Simplified and Traditional Chinese and often mixes in Traditional characters; a prompt sentence in the right script pulls it back
     lc = (language or "").lower()
     prompt = None
     if lc in ("zh", "zh-cn", "zh-sg", "zh-hans"):
@@ -324,7 +324,7 @@ def transcribe(path: str | Path, language: str = "", progress: Progress = None,
 
 def words_to_boundaries(segments: List[Dict[str, Any]], offset: float = 0.0,
                         language: str = "zh") -> List[Dict[str, Any]]:
-    """把 whisper 的词时间戳转成字幕对齐用的 boundaries（相对 offset）。"""
+    """Convert whisper's word timestamps into boundaries for subtitle alignment (relative to offset)."""
     out: List[Dict[str, Any]] = []
     for s in segments:
         ws = s.get("words") or []

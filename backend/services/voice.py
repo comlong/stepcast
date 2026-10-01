@@ -1,4 +1,4 @@
-"""用户自己的声音：单步录音 / 上传音频 / 改回 AI 配音 / 口述转文字 / 录制时边录边讲。"""
+"""The user's own voice: per-step recording / uploaded audio / back to AI voice / dictation / narrate while recording."""
 from __future__ import annotations
 
 import os
@@ -13,11 +13,11 @@ from . import asr, ffmpeg_util
 
 Progress = Optional[Callable[[float, str], None]]
 
-MAX_STEP_SECONDS = 120        # 一步的配音（录的、上传的）最长多少秒；编辑器里的录音器录配音时限 60 秒
+MAX_STEP_SECONDS = 120        # longest voice-over per step (recorded or uploaded), in seconds; the editor's recorder limits voice-over recordings to 60 seconds
 
 
 def to_mp3(src: Path, dst: Path, start: float = 0.0, end: float = 0.0) -> float:
-    """任意音频 -> mp3（可截取区间），返回时长。"""
+    """Any audio -> mp3 (optionally a time range); returns the duration."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     args: List[str] = ["-i", str(src)]
     if start > 0:
@@ -29,10 +29,10 @@ def to_mp3(src: Path, dst: Path, start: float = 0.0, end: float = 0.0) -> float:
     return ffmpeg_util.probe_duration(dst)
 
 
-# ---- 口述转文字 -----------------------------------------------------------
+# ---- dictation ---------------------------------------------------------------
 
 def dictate(src: Path, language: str = "", progress: Progress = None) -> Dict[str, Any]:
-    """只要文字，不保留音频。"""
+    """Text only; the audio isn't kept."""
     work = src.with_suffix(".dictate.mp3")
     try:
         to_mp3(src, work)
@@ -42,12 +42,12 @@ def dictate(src: Path, language: str = "", progress: Progress = None) -> Dict[st
         work.unlink(missing_ok=True)
 
 
-# ---- 单步：用自己的录音作为配音 --------------------------------------------
+# ---- per step: your own recording as voice-over --------------------------------------------
 
 def set_step_voice(proj: Project, step: Step, src: Path, transcribe: bool = True,
                    replace_text: bool = True, language: str = "",
                    progress: Progress = None) -> Dict[str, Any]:
-    """把一段录音设为这一步的配音。识别出的文字写进解说词，用于字幕和后续改用 AI 配音。"""
+    """Use a recording as this step's voice-over. The recognised text goes into the narration, for subtitles and for switching to an AI voice later."""
     audio_dir = storage.audio_dir(proj.id)
     audio_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{step.id}_own.mp3"
@@ -92,7 +92,7 @@ def set_step_voice(proj: Project, step: Step, src: Path, transcribe: bool = True
 
 
 def switch_to_ai(proj: Project, step: Step) -> None:
-    """保留文字，丢掉录音，改由 AI 朗读。"""
+    """Keep the text, discard the recording, let the AI read it."""
     if step.voice_source == "own" and step.audio:
         (storage.audio_dir(proj.id) / step.audio).unlink(missing_ok=True)
     step.voice_source = "tts"
@@ -110,16 +110,16 @@ def remove_voice(proj: Project, step: Step) -> None:
     step.boundaries = []
 
 
-# ---- 边录边讲：整段录音 -> 按操作时间切给每一步 -------------------------------
+# ---- narrate while recording: one long recording -> split across the steps by action time -------------------------------
 
-LEAD_TOLERANCE = 0.8   # 说话中点比点击晚这么多秒以内，仍算这一步（边说边点）
+LEAD_TOLERANCE = 0.8   # a sentence whose midpoint is up to this many seconds after a click still belongs to that step (talking while clicking)
 
 
 def assign_segments(segments: List[Dict[str, Any]], click_times: List[float]) -> List[List[int]]:
-    """把识别出的每句话分给某一步。
+    """Assign each recognised sentence to a step.
 
-    讲解习惯是「先说后点」：一句话属于它之后发生的第一个操作。
-    最后一个操作之后还在说的，归给最后一步。
+    People usually "say it, then click": a sentence belongs to the first action after it.
+    Talking after the last action belongs to the last step.
     """
     buckets: List[List[int]] = [[] for _ in click_times]
     if not click_times:
@@ -134,7 +134,7 @@ def assign_segments(segments: List[Dict[str, Any]], click_times: List[float]) ->
 
 def import_session(proj: Project, src: Path, rec_start_ms: float, mode: str = "ai",
                    language: str = "", progress: Progress = None) -> Dict[str, Any]:
-    """mode: ai = 识别成文字交给 AI 配音（默认） | own = 保留原声逐步切片。"""
+    """mode: ai = turn it into text for the AI voice (default) | own = keep the original voice, cut per step."""
     audio_dir = storage.audio_dir(proj.id)
     audio_dir.mkdir(parents=True, exist_ok=True)
     session = audio_dir / f"_session_{uuid.uuid4().hex[:6]}.mp3"
@@ -211,7 +211,7 @@ def _import_session(proj: Project, src: Path, session: Path, rec_start_ms: float
 
 
 def save_upload(upload, dst_dir: Path, prefix: str = "upload") -> Path:
-    """把 FastAPI UploadFile 落盘。"""
+    """Write a FastAPI UploadFile to disk."""
     dst_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(upload.filename or "").suffix.lower() or ".webm"
     if suffix not in (".webm", ".ogg", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".opus", ".mp4"):

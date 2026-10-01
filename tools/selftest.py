@@ -1,8 +1,8 @@
-"""自检脚本：不依赖 Chrome 扩展，用合成的假网页截图跑通整条流水线。
+"""Self-test: runs the whole pipeline with synthetic screenshots of a fake web page, without the Chrome extension.
 
-    python tools/selftest.py            # 合成语音 + 渲染视频
-    python tools/selftest.py --no-tts   # 跳过语音（不需要联网）
-    python tools/selftest.py --llm      # 额外测试大模型生成解说（用设置里选的那家）
+    python tools/selftest.py            # voice-over + render the video
+    python tools/selftest.py --no-tts   # skip the voice-over (no internet needed)
+    python tools/selftest.py --llm      # also test writing narration with the LLM (the provider chosen in the settings)
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from backend.services.ffmpeg_util import available
 
 def fake_page(title: str, rows: list[str], highlight_row: int = -1,
               size=(1440, 860)) -> tuple[Image.Image, tuple[int, int, int, int]]:
-    """画一张假的后台管理页面截图，返回图片和高亮元素的矩形。"""
+    """Draw a fake admin page screenshot; returns the image and the highlighted element's rectangle."""
     W, H = size
     img = Image.new("RGB", (W, H), (247, 248, 251))
     d = ImageDraw.Draw(img)

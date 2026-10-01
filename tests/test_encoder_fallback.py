@@ -1,4 +1,4 @@
-"""显卡编码中途挂掉时：这一段退回 CPU，最后合并要重编，成品仍然正常。"""
+"""When GPU encoding fails halfway: that segment falls back to the CPU, the final concatenation re-encodes, and the result is still fine."""
 import os, shutil, subprocess, sys, time
 from pathlib import Path
 SP = Path(sys.argv[1]); DATA = SP / "fallback_projects"
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend import config
 config.CONFIG_PATH = DATA / "config.json"; config._cache = None
-from fixtures_build import make_capture_project  # 假的网页录制项目，不用真实项目
+from fixtures_build import make_capture_project  # a fake recorded project instead of a real one
 PID = make_capture_project(DATA)
 from backend import storage
 from backend.services import ffmpeg_util, video as V
@@ -24,7 +24,7 @@ if enc == "libx264":
     print("这台电脑没有可用的显卡编码器，跳过（结果: 通过）")
     sys.exit(0)
 
-# 让第 2 段的显卡编码失败
+# make the GPU encode of the 2nd segment fail
 real_args, calls = ffmpeg_util.encoder_args, {"n": 0}
 def flaky(name):
     if name == enc:
@@ -43,7 +43,7 @@ d = float(subprocess.run([PROBE, "-v", "error", "-show_entries", "format=duratio
                           "default=nw=1:nk=1", str(out)], capture_output=True, text=True).stdout.strip() or 0)
 print(f"渲染完成 {time.time()-t0:.0f}s  编码器字段={r['encoder']}  时长={d:.1f}s  大小={out.stat().st_size/1e6:.2f}MB")
 ok = r["encoder"] == "mixed" and abs(d - r["duration"]) < 1.5
-# 成品能正常解码到最后一帧
+# the result decodes cleanly to the last frame
 p = subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-v", "error", "-i", str(out), "-f", "null", "-"],
                    capture_output=True, text=True)
 print("完整解码检查:", "没有报错" if p.returncode == 0 and not p.stderr.strip() else f"有问题: {p.stderr[:200]}")

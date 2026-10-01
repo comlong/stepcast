@@ -1,15 +1,15 @@
-"""界面语言（工作语言）。
+"""Interface (working) language.
 
-中文原文就是翻译的 key：代码里写 t("项目不存在")，static/locales/{lang}.json 里存
-{"项目不存在": "Project not found"}。中文界面不需要翻译文件，缺译文时也退回中文原文。
+The Chinese source text is the translation key: code writes t("项目不存在") and static/locales/{lang}.json stores
+{"项目不存在": "Project not found"}. The Chinese interface needs no translation file; missing translations also fall back to the Chinese text.
 
-  * 占位符：t("已删除 {n} 个", n=3)
-  * 数量（ICU 复数）：译文里写 "{n, plural, one {# page} other {# pages}}"，
-    波兰语还有 few / many。中文原文不需要。
-  * N_("...")：只标记「这是要翻译的文字」，不当场翻译（给提取工具看的）。
+  * Placeholders: t("已删除 {n} 个", n=3)
+  * Counts (ICU plurals): translations use "{n, plural, one {# page} other {# pages}}";
+    Polish also has few / many. The Chinese source needs none.
+  * N_("..."): only marks text as translatable without translating it on the spot (for the extraction tool).
 
-界面文字跟 ui_language；写进视频 / 文档的文字（片尾默认的「完成！」、「步骤 3」这类）
-跟项目的解说语言，用 content_lang(proj.language)。
+Interface text follows ui_language; text written into videos / documents (default texts such as "Done!" at the end or "Step 3")
+follows the project's narration language via content_lang(proj.language).
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def locale_dir() -> Path:
 
 
 def normalize(lang: Any) -> str:
-    """'de-DE' / 'de_AT' / 'DE' -> 'de'；不支持的返回 ''。"""
+    """'de-DE' / 'de_AT' / 'DE' -> 'de'; unsupported returns ''."""
     code = re.split(r"[-_]", str(lang or "").strip().lower())[0]
     return code if code in LANGS else ""
 
@@ -51,7 +51,7 @@ def current() -> str:
 
 
 def content_lang(language: str) -> str:
-    """项目解说语言对应的文字语言（写进视频 / 文档里的默认文字用）。"""
+    """Text language for the project's narration language (for default texts written into videos / documents)."""
     return normalize(language) or FALLBACK
 
 
@@ -83,7 +83,7 @@ def t(key: str, _lang: Optional[str] = None, **params: Any) -> str:
     return format_message(text, params, lang) if (params or "{" in text) else text
 
 
-# ---- ICU 复数（和 static/i18n.js 里的实现保持一致）-------------------------------
+# ---- ICU plurals (kept consistent with the implementation in static/i18n.js) -------------------------------
 
 def plural_category(lang: str, n: Any) -> str:
     try:
@@ -172,7 +172,7 @@ def format_message(text: str, params: Dict[str, Any], lang: str = "zh") -> str:
     return "".join(out)
 
 
-# ---- HTML（服务端翻译 index.html 的静态文字）-----------------------------------
+# ---- HTML (server-side translation of the static text in index.html) -----------------------------------
 
 HAN = re.compile(r"[一-鿿]")
 _SKIP = re.compile(r"(<script\b.*?</script>|<style\b.*?</style>|<!--.*?-->)", re.S | re.I)
@@ -186,13 +186,13 @@ def norm_text(s: str) -> str:
 
 
 def _no_translate(seg: str, pos: int) -> bool:
-    """文字所在的标签带 translate="no"（比如语言名「中文」「日本語」）就不翻译。"""
+    """Text inside a tag with translate="no" (e.g. language names like "中文", "日本語") isn't translated."""
     tag = seg[seg.rfind("<", 0, pos):pos]
     return not tag.startswith("</") and 'translate="no"' in tag
 
 
 def html_keys(src: str):
-    """提取 HTML 里要翻译的 key（和 translate_html 用同一套规则）。"""
+    """Extract the keys to translate from HTML (same rules as translate_html)."""
     keys = []
 
     def collect(seg: str):

@@ -1,6 +1,6 @@
-/* 界面语言。中文原文就是 key；译文由服务端注入到 window.VT_I18N = { lang, dict }。
-   占位符 {name}；数量用 ICU 复数 {n, plural, one {# page} other {# pages}}。
-   和 backend/i18n.py、extension/i18n.js 里的实现保持一致。 */
+/* Interface language. The Chinese source text is the key; translations are injected by the server as window.VT_I18N = { lang, dict }.
+   Placeholders {name}; counts use ICU plurals {n, plural, one {# page} other {# pages}}.
+   Kept consistent with backend/i18n.py and extension/i18n.js. */
 
 (function (global) {
   const I18N = global.VT_I18N || { lang: 'zh', dict: {} };
@@ -82,7 +82,7 @@
   }
 
   global.t = t;
-  global.N_ = (s) => s;                       // 只标记要翻译，不当场翻译
+  global.N_ = (s) => s;                       // only marks text as translatable, does not translate on the spot
   global.i18nLang = () => I18N.lang;
-  global.i18nFormat = formatMessage;          // 测试用
+  global.i18nFormat = formatMessage;          // for tests
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -1,4 +1,4 @@
-"""用大模型根据录制到的操作步骤生成解说脚本 / 翻译（用哪家在设置里选）。"""
+"""Use the LLM to write the narration script from the recorded steps / to translate it (the provider is chosen in the settings)."""
 from __future__ import annotations
 
 import json
@@ -10,8 +10,8 @@ from .. import i18n
 from ..models import DialogueLine, Project, Step, drop_stale_lines, join_lines
 from .llm import ChatClient, LLMError, get_client
 
-# 解说语言 / 第二语言字幕都用这张表，顺序就是界面上的顺序：
-# 中文 → 欧洲语言（常用的在前，其余按本地名字母排）→ 其他国家的语言。每种都有 Edge 的免费配音音色
+# One table for narration languages and second-language subtitles; its order is the order in the UI:
+# Chinese → European languages (common ones first, the rest alphabetically by native name) → other languages. Each has free Edge voices
 LANG_GROUPS = (
     ("zh", {"zh-CN": "简体中文", "zh-TW": "繁體中文"}),  # i18n: ignore
     ("europe", {
@@ -56,7 +56,7 @@ def _short_url(url: str) -> str:
 
 
 def step_digest(s: Step) -> Dict[str, Any]:
-    """把一个步骤压缩成给 LLM 看的紧凑描述。"""
+    """Compress one step into a compact description for the LLM."""
     t = s.target
     d: Dict[str, Any] = {
         "i": s.index,
@@ -131,7 +131,7 @@ def generate_script(
     progress: Optional[Callable[[float, str], None]] = None,
     client: Optional[ChatClient] = None,
 ) -> Dict[str, Any]:
-    """生成 / 补全解说脚本，直接写回 proj（调用方负责保存）。"""
+    """Write / complete the narration script, directly into proj (the caller saves it)."""
     if proj.source == "slides":
         ps = proj.settings or {}
         return generate_slides_script(
@@ -139,12 +139,12 @@ def generate_script(
             detail=ps.get("slides_detail", "standard"), overwrite=overwrite,
             extra=extra, missing=ps.get("slides_missing", "ai"),
             progress=progress, client=client)
-    # 视频步骤不交给 AI：要么播视频原声，要么由你自己写解说
+    # video steps aren't sent to the AI: they either play their own sound or you write the narration yourself
     steps = [s for s in proj.steps if s.include and s.kind != "video"]
     if not steps:
         raise LLMError(i18n.t("没有可用的步骤，请先录制。"))
-    # 不覆盖、而且每一步都已经有解说：不用再问大模型。
-    # 一键生成中途停下、改完再点时，就能直接接着往下做，不必重新等一遍生成
+    # Not overwriting and every step already has narration: no need to ask the LLM.
+    # After stopping "Generate all" halfway and editing, clicking again continues right away without waiting for generation again
     if not overwrite and proj.title and all((s.narration or "").strip() for s in steps):
         if progress:
             progress(1.0, i18n.t("每一步都已有解说，跳过生成"))
@@ -209,7 +209,7 @@ def generate_script(
         if not item:
             continue
         if s.voice_source == "own":
-            s.title = s.title or item["title"]   # 原声是你亲口讲的，只补标题不动文案
+            s.title = s.title or item["title"]   # the recording is your own voice: only fill in the title, keep the text
             continue
         if s.narration and not overwrite:
             continue
@@ -217,7 +217,7 @@ def generate_script(
         s.narration = item["narration"] or s.narration
         drop_stale_lines(s)
         s.caption = item["caption"] or item["narration"] or s.caption
-        s.audio = ""          # 解说变了，旧语音作废
+        s.audio = ""          # the narration changed, the old voice-over is outdated
         s.audio_duration = 0.0
         s.boundaries = []
         written += 1
@@ -276,12 +276,12 @@ def generate_slides_script(
     progress: Optional[Callable[[float, str], None]] = None,
     client: Optional[ChatClient] = None,
 ) -> Dict[str, Any]:
-    """幻灯片解说。
+    """Narration for slides.
 
-    notes_mode: verbatim 备注原文就是解说 | reference AI 参考备注改写 | ignore 不用备注
-    missing（仅 verbatim）: 没有备注的页 ai = 让 AI 按页面内容写 | empty = 留空，自己补
+    notes_mode: verbatim = the notes are the narration | reference = AI rewrites from the notes | ignore = don't use the notes
+    missing (verbatim only): slides without notes: ai = the AI writes from the slide content | empty = leave empty, fill in by hand
 
-    备注原文模式下，只有「没备注且选了 AI 补写」的页会发给大模型；其余全程离线。
+    In verbatim mode only slides "without notes and with AI fill-in" (or with notes in another language) are sent to the LLM; everything else stays offline.
     """
     if proj.is_dialogue():
         return generate_dialogue_script(proj, notes_mode=notes_mode, detail=detail, overwrite=overwrite,
@@ -295,19 +295,19 @@ def generate_slides_script(
     left_empty = 0
     other_lang = 0
     need_ai: List[Step] = []
-    as_script: set[str] = set()           # 备注就是讲稿、只是语言不同：AI 照着备注用解说语言讲，不改写
+    as_script: set[str] = set()           # the notes are the script, just in another language: the AI tells them in the narration language without rewriting
     for s in steps:
         if notes_mode == "verbatim" and not s.slide_notes.strip() and missing == "empty":
-            left_empty += 1               # 没备注又不想让 AI 写：保持原样，自己在编辑器里补
+            left_empty += 1               # no notes and no AI wanted: leave it, to be filled in in the editor
             continue
         if notes_mode == "verbatim" and s.slide_notes.strip() and not same_language(s.slide_notes, proj.language):
-            # 备注和解说不是同一种语言（比如英文 PPT 做中文视频）：不能原样念，交给 AI 参考备注用解说语言写
+            # notes and narration are in different languages (e.g. an English deck for a Chinese video): can't be read as they are, so the AI writes them in the narration language
             other_lang += 1
             need_ai.append(s)
             as_script.add(s.id)
             continue
         if notes_mode == "verbatim" and s.slide_notes.strip():
-            # 备注里的换行是排版用的，朗读时并成一段：中日文直接接上，其他文字用空格（按备注本身的文字判断）
+            # line breaks in the notes are just layout; join them for reading: directly for Chinese / Japanese, with spaces otherwise (judged by the notes' own script)
             cjk = len(re.findall(r"[぀-ヿ一-鿿]", s.slide_notes))  # i18n: ignore
             joiner = "" if cjk > len(re.findall(r"[A-Za-z]", s.slide_notes)) else " "
             text = re.sub(r"\s*\n\s*", joiner, s.slide_notes.strip())
@@ -322,7 +322,7 @@ def generate_slides_script(
 
     head: Dict[str, Any] = {}
     ai_done = 0
-    # 只有真有页面需要 AI 写时才联网；逐字朗读且每页都有备注 = 全程离线
+    # only go online if some slide really needs the AI; verbatim with notes on every slide = fully offline
     if need_ai:
         client = client or get_client()
         lang = lang_name(proj.language)
@@ -462,7 +462,7 @@ def _slide_payload(s: Step, notes_mode: str) -> Dict[str, Any]:
 
 
 def set_lines(s: Step, lines: List[Dict[str, str]]) -> None:
-    """写入一步的台词：解说是台词拼起来的全文，字幕跟着解说；旧配音作废。"""
+    """Write one step's dialogue lines: the narration is the lines joined, the subtitle follows the narration; the old voice-over is outdated."""
     s.lines = [DialogueLine(who=x["who"], text=x["text"]) for x in lines]
     s.narration = join_lines(s.lines)
     if s.caption_follows_narration():
@@ -479,8 +479,8 @@ def generate_dialogue_script(
     progress: Optional[Callable[[float, str], None]] = None,
     client: Optional[ChatClient] = None,
 ) -> Dict[str, Any]:
-    """双人问答：每页写成主持人提问、讲师讲解的几句台词。备注原文模式在这里当作「参考备注」
-    （备注是一个人讲的稿子，没法原样拆成两个人的对话）。"""
+    """Two-person Q&A: each slide becomes a few lines where the host asks and the expert explains. Verbatim notes are treated as "reference" here
+    (the notes are one person's script and can't be split into a two-person dialogue as they are)."""
     from . import dialogue
     notes_mode = "reference" if notes_mode == "verbatim" else notes_mode
     steps = [s for s in proj.steps if s.include and s.voice_source != "own" and s.kind != "video"]
@@ -492,8 +492,8 @@ def generate_dialogue_script(
         client = client or get_client()
         lang = lang_name(proj.language)
         dialogue.ensure_speakers(proj)
-        names = dialogue.speaker_names(proj)        # 不告诉 AI 名字；它自己加上的称呼、前缀在这里去掉
-        BATCH = 5                                   # 台词比单人解说长，一次少给几页，免得 AI 为了塞进篇幅压缩内容
+        names = dialogue.speaker_names(proj)        # the AI isn't told the names; names and prefixes it adds anyway are removed here
+        BATCH = 5                                   # dialogue is longer than single narration, so fewer slides per request, so the AI doesn't compress content to fit
         prev_tail: List[str] = []
         batches = [steps[i:i + BATCH] for i in range(0, len(steps), BATCH)]
         first_id = next((s.id for s in proj.steps if s.include and s.kind != "video"), "")
@@ -505,9 +505,9 @@ def generate_dialogue_script(
             for s in batch:
                 d = _slide_payload(s, notes_mode)
                 if s.id == first_id:
-                    d["position"] = "first"      # 整个视频的第一页：主持人开场
+                    d["position"] = "first"      # first slide of the whole video: the host opens
                 if s.id == last_id:
-                    d["position"] = "last"       # 最后一页：主持人收尾
+                    d["position"] = "last"       # last slide: the host wraps up
                 payload.append(d)
             ctx = extra and f"额外要求：{extra}\n" or ""  # i18n: ignore
             if bi > 0:
@@ -559,13 +559,13 @@ TRANSLATE_SYSTEM = """你是专业的本地化译员，负责把教学视频旁�
 
 
 def _translate_items(proj: Project, steps: Optional[List[Step]] = None, card: bool = True) -> List[Dict[str, Any]]:
-    """要翻译的文字：标题 / 片头片尾（card）和这些步骤的标题、解说（播原声的视频是字幕）。"""
+    """Texts to translate: title / intro and outro (card) and these steps' titles and narration (subtitles for videos with their own sound)."""
     items: List[Dict[str, Any]] = []
     if card:
         items += [{"k": "title", "t": proj.title}, {"k": "subtitle", "t": proj.subtitle},
                   {"k": "intro", "t": proj.intro}, {"k": "outro", "t": proj.outro}]
     for s in proj.steps if steps is None else steps:
-        # 和生成解说保持一致：没勾「包含在视频中」的步骤不外发
+        # consistent with writing narration: steps without "Include in video" are never sent
         if s.include and s.lines:
             items.append({"k": f"s{s.index}:title", "t": s.title})
             items += [{"k": f"s{s.index}:line{j}", "t": ln.text} for j, ln in enumerate(s.lines)]
@@ -573,7 +573,7 @@ def _translate_items(proj: Project, steps: Optional[List[Step]] = None, card: bo
             items.append({"k": f"s{s.index}:title", "t": s.title})
             items.append({"k": f"s{s.index}:narration", "t": s.narration})
         if s.include and s.plays_clip_audio() and s.caption:
-            # 播视频原声的步骤：声音还是原来的，字幕（视频里讲的话）翻成目标语言
+            # steps playing the video's own sound: the sound stays, the subtitle (what is said in the video) is translated
             items.append({"k": f"s{s.index}:caption", "t": s.caption})
     return [x for x in items if (x["t"] or "").strip()]
 
@@ -619,7 +619,7 @@ def _apply_translation(proj: Project, result: Dict[str, str]) -> None:
             if s.caption_follows_narration():
                 s.caption = nt
             s.audio = ""
-            s.voice_source = "tts"       # 原声是原语言，翻译后改由 AI 朗读
+            s.voice_source = "tts"       # the recording is in the old language; after translation the AI reads the text
             s.audio_duration = 0.0
             s.boundaries = []
         if tt:
@@ -636,7 +636,7 @@ def translate_project(
     progress: Optional[Callable[[float, str], None]] = None,
     client: Optional[ChatClient] = None,
 ) -> Dict[str, Any]:
-    """把标题 / 片头片尾 / 每步解说翻译成目标语言。"""
+    """Translate the title / intro and outro / every step's narration into the target language."""
     client = client or get_client()
     target = lang_name(target_language)
     items = _translate_items(proj)
@@ -659,10 +659,10 @@ def switch_language(
     client: Optional[ChatClient] = None,
     voice: str = "",
 ) -> Dict[str, Any]:
-    """整个项目换成另一种语言（「翻译并切换」）。
+    """Switch the whole project to another language ("translate and switch").
 
-    幻灯片项目：幻灯片页不翻译现有解说，而是按 PPT 原文（页面文字 + 演讲者备注）直接用目标语言重写，
-    标题和片头片尾一起重写；插入的视频步骤没有 PPT 原文，照常翻译。网页录制的项目：整体翻译。"""
+    Slide projects: slide narration isn't translated but rewritten in the target language from the deck (slide text + speaker notes),
+    together with the title, intro and outro; inserted video steps have no deck text and are translated as usual. Recorded projects: translated as a whole."""
     if proj.is_dialogue():
         from . import dialogue
         dialogue.retarget(proj, target_language, voice)
@@ -672,21 +672,21 @@ def switch_language(
     client = client or get_client()
     target = lang_name(target_language)
     ps = proj.settings or {}
-    # 备注原文模式换语言时改为「AI 参考备注改写」：备注是原来的语言，不能原样念
+    # switching language in verbatim mode uses "AI rewrites from the notes": the notes are in the old language and can't be read as they are
     notes_mode = ps.get("slides_notes_mode", "verbatim")
     notes_mode = "reference" if notes_mode == "verbatim" else notes_mode
     before = {s.id: s.narration for s in slides}
     card_before = (proj.title, proj.subtitle, proj.intro, proj.outro)
     for s in slides:
         if s.voice_source == "own":
-            s.voice_source, s.audio, s.audio_duration, s.boundaries = "tts", "", 0.0, []   # 自己的录音是原来的语言，换成 AI 朗读
+            s.voice_source, s.audio, s.audio_duration, s.boundaries = "tts", "", 0.0, []   # your own recording is in the old language, switch to the AI voice
     proj.language = target_language
 
     def sub(lo: float, hi: float):
         return (lambda f, m: progress(lo + f * (hi - lo), m)) if progress else None
     res = generate_slides_script(proj, notes_mode=notes_mode, detail=ps.get("slides_detail", "standard"),
                                  overwrite=True, missing="ai", progress=sub(0.0, 0.85), client=client)
-    # 剩下没有 PPT 原文可依的：视频步骤，以及 AI 漏掉没写的页、标题
+    # what's left without deck text: video steps, plus slides and titles the AI missed
     rest = [s for s in proj.steps if s.include and (s.kind == "video" or
                                                     (s.id in before and s.narration == before[s.id]))]
     card_left = (proj.title, proj.subtitle, proj.intro, proj.outro) == card_before
@@ -715,7 +715,7 @@ REWRITE_DIALOGUE_SYSTEM = ("你是教学视频编剧，按用户要求改写这�
 
 def rewrite_dialogue(proj: Project, step: Step, instruction: str,
                      client: Optional[ChatClient] = None) -> List[Dict[str, str]]:
-    """按指令改写一页的问答台词（双人问答项目里的「AI 改写」）。"""
+    """Rewrite one slide's Q&A dialogue as instructed ("AI rewrite" in Q&A projects)."""
     from . import dialogue
     client = client or get_client()
     dialogue.ensure_speakers(proj)
@@ -740,7 +740,7 @@ def rewrite_dialogue(proj: Project, step: Step, instruction: str,
 
 def rewrite_step(proj: Project, step: Step, instruction: str,
                  client: Optional[ChatClient] = None) -> str:
-    """按指令重写单步解说（界面上的「AI 改写」按钮）。"""
+    """Rewrite one step's narration as instructed (the "AI rewrite" button)."""
     client = client or get_client()
     ctx = json.dumps(step_digest(step), ensure_ascii=False)
     prompt = (

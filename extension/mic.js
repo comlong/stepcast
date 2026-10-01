@@ -1,5 +1,5 @@
-/* 麦克风授权页。
- * offscreen 文档自己弹不出权限对话框，所以先在这个可见页面里授权一次，之后录音就能直接用。
+/* Microphone permission page.
+ * The offscreen document can't show a permission prompt itself, so permission is granted once on this visible page; recording then works directly.
  */
 const $ = (id) => document.getElementById(id);
 let stream = null;
@@ -72,5 +72,5 @@ $('close').onclick = () => window.close();
   try {
     const st = await navigator.permissions.query({ name: 'microphone' });
     if (st.state === 'granted') await granted();
-  } catch (e) { /* 老版本 Chrome 不支持查询，就让用户手点 */ }
+  } catch (e) { /* older Chrome can't query the permission; let the user click */ }
 })();

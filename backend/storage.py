@@ -1,4 +1,4 @@
-"""项目文件存储：projects/<id>/{project.json, screenshots/, audio/, output/}"""
+"""Project file storage: projects/<id>/{project.json, screenshots/, audio/, output/}"""
 from __future__ import annotations
 
 import base64
@@ -20,7 +20,7 @@ _locks_guard = threading.Lock()
 
 PID_RE = re.compile(r"^p_[0-9a-f]{12}$")
 
-# 这组字段描述「这一步的配音」，必须整体一起写，否则会出现文字和音频对不上
+# These fields describe "this step's voice-over" and must always be written together, otherwise text and audio get out of sync
 AUDIO_FIELDS = ("audio", "audio_duration", "boundaries", "voice_source", "line_times")
 
 
@@ -65,8 +65,8 @@ def create(name: str = "", language: str = "") -> Project:
     cfg = config.load()
     lang = language or cfg["language"]
     voice = cfg["voice"]
-    # 指定了别的解说语言（比如「边录边讲」按麦克风的语言建项目）：配置里的音色不是这种语言就换成它的默认音色，
-    # 不然德语解说会被英语音色念出来
+    # a different narration language was given (e.g. "narrate while recording" creates the project in the microphone's language): if the configured voice isn't in that language, use its default voice,
+    # otherwise German narration would be read by an English voice
     if not voice.lower().startswith(lang.split("-")[0].lower() + "-"):
         voice = tts.default_voice(lang)
     proj = Project(
@@ -82,8 +82,8 @@ def create(name: str = "", language: str = "") -> Project:
 
 
 def cleanup_temp(max_age_hours: float = 24) -> int:
-    """启动时清理临时文件：渲染到一半被关掉留下的 work/render_*（进程刚启动，不可能有渲染在跑），
-    以及 _tmp 里超过一天的上传。返回删掉了几个。"""
+    """Clean up temporary files at start-up: work/render_* left by renders that were interrupted (the process just started, so no render can be running),
+    and uploads in _tmp older than a day. Returns how many were deleted."""
     import shutil
     n = 0
     now = time.time()
@@ -117,7 +117,7 @@ def load(pid: str) -> Optional[Project]:
     if not valid_pid(pid):
         return None
     p = _json_path(pid)
-    # Windows 上另一个线程正在 replace 时，读会短暂遇到 PermissionError，稍等重试
+    # on Windows, reading while another thread is replacing the file briefly raises PermissionError; wait and retry
     for attempt in range(40):
         if not p.exists():
             return None
@@ -157,7 +157,7 @@ def save(proj: Project) -> Project:
 
 
 def update(pid: str, fn: Callable[[Project], object]):
-    """加锁读改写。fn 的返回值不为 None 时原样返回，否则返回项目本身。"""
+    """Locked read-modify-write. Returns fn's return value if it isn't None, otherwise the project itself."""
     with _lock_for(pid):
         proj = load(pid)
         if proj is None:
@@ -170,14 +170,14 @@ def update(pid: str, fn: Callable[[Project], object]):
 def commit(pid: str, before: Project, after: Project,
            step_fields: Iterable[str] = (), project_fields: Iterable[str] = (),
            force_audio: bool = False) -> Project:
-    """把后台任务的结果合并回项目（三方合并）。
+    """Merge a background job's result back into the project (three-way merge).
 
-    before = 任务开始时的快照，after = 任务算完的结果。
-    只写任务真正改过的字段，而且只在用户这段时间没动过该字段时才写，
-    所以任务运行期间在编辑器里做的修改不会被覆盖；任务期间新录的 / 被删的步骤也不受影响。
+    before = snapshot at the start of the job, after = the job's result.
+    Only fields the job really changed are written, and only if the user didn't touch that field meanwhile,
+    so edits made in the editor while the job ran are never overwritten; steps recorded / deleted during the job are unaffected too.
 
-    配音字段是一组：只有当前的解说词正好是任务配音时用的那段文字，才把音频写回去。
-    force_audio=True 用于「用户明确上传了录音」，这时音频无条件写回。
+    The voice-over fields are one group: the audio is only written back if the current narration is exactly the text the job voiced.
+    force_audio=True is for "the user explicitly uploaded a recording"; then the audio is always written back.
     """
     step_fields = tuple(step_fields)
     project_fields = tuple(project_fields)
@@ -249,7 +249,7 @@ def delete(pid: str) -> bool:
 
 
 def save_screenshot(pid: str, step_id: str, b64: str) -> tuple[str, int, int]:
-    """保存 base64 截图，返回 (文件名, 宽, 高)。"""
+    """Save a base64 screenshot; returns (file name, width, height)."""
     from PIL import Image
     if "," in b64:
         b64 = b64.split(",", 1)[1]
@@ -267,7 +267,7 @@ def save_screenshot(pid: str, step_id: str, b64: str) -> tuple[str, int, int]:
 
 
 def add_step(pid: str, step: Step) -> int:
-    """追加一步，返回追加后的步骤总数。"""
+    """Append a step; returns the number of steps afterwards."""
     def _do(proj: Project):
         step.index = len(proj.steps)
         proj.steps.append(step)

@@ -1,10 +1,10 @@
-"""把「发给大模型的东西」原样打印出来，不真正联网。
+"""Print exactly what would be sent to the LLM, without going online.
 
-用一个假客户端顶替真正的模型，抓下要发送的消息后中止，所以不消耗额度、不需要 API Key。
-消息内容对所有提供商都一样；只有外层协议（OpenAI 兼容 / Claude）不同。
+A fake client replaces the real model, captures the messages to be sent and aborts, so no credits or API key are needed.
+The message content is the same for every provider; only the outer protocol (OpenAI-compatible / Claude) differs.
 
-    python tools/dump_llm_payload.py                # 用最近一个项目
-    python tools/dump_llm_payload.py p_xxxxxxxx     # 指定项目
+    python tools/dump_llm_payload.py                # the most recent project
+    python tools/dump_llm_payload.py p_xxxxxxxx     # a specific project
     python tools/dump_llm_payload.py --save out.json
 """
 from __future__ import annotations
@@ -21,14 +21,14 @@ from backend.services import llm, script_gen
 
 
 class Intercepted(BaseException):
-    """抓到请求后用它中断，避免真的发出去。继承 BaseException，不会被重试逻辑吞掉。"""
+    """Raised after capturing a request so it is never sent. Derived from BaseException so retry logic can't swallow it."""
 
     def __init__(self, payload):
         self.payload = payload
 
 
 class CapturingClient:
-    """和真客户端同样的接口，但只记录不发送。"""
+    """Same interface as the real client, but records instead of sending."""
 
     def __init__(self):
         r = llm.resolve()
@@ -44,7 +44,7 @@ class CapturingClient:
 
 
 def capture(fn, *args, **kw):
-    """执行一次会调用大模型的动作，返回它本来要发送的内容。"""
+    """Run one action that calls the LLM and return what it would have sent."""
     try:
         fn(*args, **kw)
         return None
@@ -92,7 +92,7 @@ def main() -> int:
         return 1
     print(f"项目：{proj.name}（{pid}），{len(proj.steps)} 步")
 
-    client = CapturingClient()      # 不需要 Key，请求会被拦下来
+    client = CapturingClient()      # no key needed, the request is intercepted
     print(f"当前设置的模型：{client.name} / {client.model}")
 
     dumps = {}

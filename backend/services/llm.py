@@ -1,11 +1,11 @@
-"""大模型接入：在设置里选一家，生成解说 / 翻译 / AI 改写都走它。
+"""LLM access: one provider is chosen in the settings and used for writing narration, translating and AI rewrites.
 
-两类协议：
-  * OpenAI 兼容（/chat/completions）：DeepSeek、OpenAI、Mistral、Gemini、Azure OpenAI、本地 Ollama、其他兼容服务
-  * Anthropic Claude：官方 SDK
+Two protocols:
+  * OpenAI-compatible (/chat/completions): DeepSeek, OpenAI, Mistral, Gemini, Azure OpenAI, local Ollama, other compatible services
+  * Anthropic Claude: the official SDK
 
-配置存在 config.json 的 llm_provider + llm_providers[{id}] = {api_key, base_url, model}；
-老版本的 deepseek_api_key / deepseek_model 仍然有效。
+Settings live in config.json as llm_provider + llm_providers[{id}] = {api_key, base_url, model};
+the old deepseek_api_key / deepseek_model fields still work.
 """
 from __future__ import annotations
 
@@ -30,20 +30,20 @@ class LLMError(RuntimeError):
 class Preset:
     id: str
     name: str
-    kind: str                         # openai（OpenAI 兼容协议）| anthropic
+    kind: str                         # openai (OpenAI-compatible protocol) | anthropic
     base_url: str = ""
     model: str = ""
-    models: Tuple[str, ...] = ()      # 下拉建议；「获取模型列表」能拿到完整的
-    env: Tuple[str, ...] = ()         # 环境变量里的 Key，优先于界面里填的
+    models: Tuple[str, ...] = ()      # dropdown suggestions; "Fetch model list" gets the full list
+    env: Tuple[str, ...] = ()         # keys from environment variables take precedence over the settings page
     key_url: str = ""
-    hint: str = ""                    # 数据在哪处理、怎么申请
+    hint: str = ""                    # where data is processed and how to get a key
     needs_key: bool = True
-    base_url_required: bool = False   # 没有公共地址，必须自己填
+    base_url_required: bool = False   # no public endpoint, must be filled in
     base_url_hint: str = ""
-    auth: str = "bearer"              # bearer | azure（api-key 头）
-    token_floor: int = 0              # 推理模型会把思考也算进 max_tokens，给个下限免得输出被截断
-    new_token_param: bool = False     # 用 max_completion_tokens 而不是 max_tokens
-    params: Tuple[Tuple[str, Any], ...] = ()   # 每次请求都带上的附加参数（比如关掉思考模式）
+    auth: str = "bearer"              # bearer | azure (api-key header)
+    token_floor: int = 0              # reasoning models count their thinking in max_tokens; a floor keeps the output from being cut off
+    new_token_param: bool = False     # use max_completion_tokens instead of max_tokens
+    params: Tuple[Tuple[str, Any], ...] = ()   # extra parameters sent with every request (e.g. to switch thinking off)
 
 
 PRESETS: Dict[str, Preset] = {p.id: p for p in (
@@ -51,7 +51,7 @@ PRESETS: Dict[str, Preset] = {p.id: p for p in (
            ("deepseek",), ("DEEPSEEK_API_KEY",),
            "https://platform.deepseek.com/api_keys",
            N_("中国公司，数据在中国境内处理。")),
-    # 国内的几家：都是 OpenAI 兼容接口。写解说不需要「深度思考」（慢、贵），能关的都关掉
+    # The Chinese providers: all OpenAI-compatible. Writing narration doesn't need "deep thinking" (slow, expensive), so switch it off where possible
     Preset("doubao", N_("豆包（火山方舟）"), "openai", "https://ark.cn-beijing.volces.com/api/v3",
            "doubao-seed-2-1-pro-260628", ("doubao-seed-2-1-pro-260628", "doubao-seed-2-0-lite-260215"),
            ("ARK_API_KEY",), "https://console.volcengine.com/ark",
@@ -129,24 +129,24 @@ class Resolved:
     extra: Dict[str, Any] = field(default_factory=dict)
 
 
-# DeepSeek 的模型名换过几次（2026-07-24 停用 deepseek-chat / deepseek-reasoner，之后又改成 deepseek-flash），
-# 新模型还默认打开「思考」模式（更慢、更贵）。设置里统一只显示一个「deepseek」，不带 -chat / -flash 这些后缀：
-# 发请求时换成 DeepSeek 当前的模型名，并关掉思考，效果和原来的 deepseek-chat 普通对话一样。
-# 老配置里存的那些名字自动当成「deepseek」，用户不用改设置。
-DEEPSEEK_MODEL = "deepseek"                 # 设置里显示的
-DEEPSEEK_API_MODEL = "deepseek-flash"       # 实际发出去的
+# DeepSeek renamed its models several times (deepseek-chat / deepseek-reasoner were retired on 2026-07-24, later renamed to deepseek-flash),
+# and new models think by default (slower, more expensive). The settings show a single "deepseek" without -chat / -flash suffixes:
+# requests use DeepSeek's current model name with thinking off, which behaves like the old deepseek-chat conversation mode.
+# Names stored in old settings are treated as "deepseek" automatically; users don't need to change anything.
+DEEPSEEK_MODEL = "deepseek"                 # shown in the settings
+DEEPSEEK_API_MODEL = "deepseek-flash"       # actually sent
 DEEPSEEK_LEGACY = {"", "deepseek", "deepseek-chat", "deepseek-reasoner", "deepseek-flash", "deepseek-v4-flash"}
 
 
 def request_model(r: Resolved) -> Tuple[str, Dict[str, Any]]:
-    """实际发给服务商的模型名和附加参数。设置里显示的模型名不变。"""
+    """Model name and extra parameters actually sent to the provider. The model name shown in the settings stays the same."""
     if r.preset.id != "deepseek":
         return r.model, {k: v for k, v in r.preset.params}
     model = DEEPSEEK_API_MODEL if r.model == DEEPSEEK_MODEL else r.model
     return model, {"thinking": {"type": "disabled"}}
 
 
-# ---- 配置解析 ----------------------------------------------------------------
+# ---- settings ------------------------------------------------------------------
 
 def provider_id(cfg: Optional[Dict[str, Any]] = None) -> str:
     cfg = cfg if cfg is not None else config.load()
@@ -156,7 +156,7 @@ def provider_id(cfg: Optional[Dict[str, Any]] = None) -> str:
 
 def resolve(pid: str = "", cfg: Optional[Dict[str, Any]] = None, api_key: str = "",
             base_url: str = "", model: str = "") -> Resolved:
-    """默认值 < 老版 deepseek_* 字段 < llm_providers 里保存的 < 这次调用传入的；Key 另外看环境变量。"""
+    """Defaults < old deepseek_* fields < saved llm_providers values < values passed to this call; keys also come from environment variables."""
     cfg = cfg if cfg is not None else config.load()
     pid = pid if pid in PRESETS else provider_id(cfg)
     p = PRESETS[pid]
@@ -186,7 +186,7 @@ def resolve(pid: str = "", cfg: Optional[Dict[str, Any]] = None, api_key: str = 
     r.base_url = (r.base_url or "").strip().rstrip("/")
     r.model = (r.model or "").strip()
     if pid == "deepseek" and r.model.lower() in DEEPSEEK_LEGACY:
-        r.model = DEEPSEEK_MODEL      # 老配置里存的 deepseek-chat 等，一律显示成「deepseek」
+        r.model = DEEPSEEK_MODEL      # deepseek-chat etc. stored in old settings are always shown as "deepseek"
     return r
 
 
@@ -222,7 +222,7 @@ def get_client(pid: str = "", api_key: str = "", base_url: str = "", model: str 
     return OpenAICompatClient(r)
 
 
-# ---- 给界面用 ----------------------------------------------------------------
+# ---- for the UI ----------------------------------------------------------------
 
 def _mask(key: str) -> str:
     if not key:
@@ -231,7 +231,7 @@ def _mask(key: str) -> str:
 
 
 def public_state(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """设置页用：每家的预设和当前保存的值。Key 只给掩码。"""
+    """For the settings page: each provider's preset and saved values. Keys are only returned masked."""
     cfg = cfg if cfg is not None else config.load()
     pid = provider_id(cfg)
     saved = cfg.get("llm_providers") or {}
@@ -245,7 +245,7 @@ def public_state(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             saved_model=r.model, saved_base_url=r.base_url if r.base_url != p.base_url else "",
             key_masked=_mask(r.api_key),
             key_env=r.key_source[4:] if r.key_source.startswith("env:") else "",
-            # 不需要 Key 的（Ollama 等）只有真正设置过或正在用才算配好，免得没装也显示 ✓
+            # providers without a key (Ollama etc.) only count as configured when really set up or in use, so they don't show ✓ when not installed
             configured=is_configured(r) and (bool(r.api_key) or i in saved or i == pid),
         )
         out.append(d)
@@ -255,7 +255,7 @@ def public_state(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 
 
 def merge_settings_patch(patch: Dict[str, Any], cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """把界面提交的 llm_providers 合并进已保存的值：没填 Key 就保留原来的 Key。"""
+    """Merge llm_providers submitted by the UI into the saved values: an empty key keeps the existing one."""
     cfg = cfg if cfg is not None else config.load()
     if "llm_provider" in patch and patch["llm_provider"] not in PRESETS:
         patch.pop("llm_provider")
@@ -287,7 +287,7 @@ def test_connection(pid: str, api_key: str = "", base_url: str = "", model: str 
         c = get_client(pid, api_key, base_url, model)
         msg = c.ping()
         return {"ok": True, "message": msg, "model": c.model, "provider": c.name}
-    except Exception as e:  # noqa: BLE001 —— 原样告诉用户
+    except Exception as e:  # noqa: BLE001 — report it to the user as is
         return {"ok": False, "message": str(e)}
 
 
@@ -296,20 +296,20 @@ def list_models(pid: str, api_key: str = "", base_url: str = "") -> Dict[str, An
         r = resolve(pid, api_key=api_key, base_url=base_url)
         c = get_client(pid, api_key, base_url, model=r.model or "-")
         if r.preset.id == "deepseek":
-            return {"ok": True, "models": [DEEPSEEK_MODEL]}     # DeepSeek 只给一个「deepseek」，不列具体型号
+            return {"ok": True, "models": [DEEPSEEK_MODEL]}     # DeepSeek offers a single "deepseek", no specific model versions
         return {"ok": True, "models": sorted(set(c.list_models()))}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "message": str(e), "models": []}
 
 
-# ---- 通用工具 ----------------------------------------------------------------
+# ---- shared helpers ----------------------------------------------------------------
 
 def run_cancellable(fn: Callable[[threading.Event], Any], name: str = "llm-http") -> Any:
-    """在后台线程里发请求，前台每 0.2 秒看一眼有没有点停止。
+    """Send the request in a background thread while the caller checks every 0.2 s whether Stop was clicked.
 
-    一次生成解说可能要几十秒，HTTP 请求本身没法从外面打断；点了停止就不再等结果，
-    并把 stop 事件置位 —— 支持流式的提供商（Claude）会据此立刻关掉连接，不再继续计费。
-    不在任务线程里调用时（比如测试连接）就相当于普通的同步调用。
+    Writing narration can take tens of seconds and an HTTP request can't be interrupted from outside; after Stop we no longer wait for the result
+    and set the stop event — providers with streaming (Claude) then close the connection immediately and stop billing.
+    Outside a job thread (e.g. when testing the connection) this is an ordinary synchronous call.
     """
     box: Dict[str, Any] = {}
     stop = threading.Event()
@@ -317,7 +317,7 @@ def run_cancellable(fn: Callable[[threading.Event], Any], name: str = "llm-http"
     def run():
         try:
             box["r"] = fn(stop)
-        except BaseException as e:      # noqa: BLE001 —— 原样交回调用方处理
+        except BaseException as e:      # noqa: BLE001 — handed back to the caller as is
             box["e"] = e
 
     th = threading.Thread(target=run, name=name, daemon=True)
@@ -342,12 +342,12 @@ def sleep_cancellable(seconds: float) -> None:
 
 
 def strip_think(text: str) -> str:
-    """推理模型把思考过程放在 <think>…</think> 里一起返回（MiniMax、部分千问 / DeepSeek 兼容接口），去掉。"""
+    """Reasoning models return their thinking inside <think>…</think> (MiniMax, some Qwen / DeepSeek-compatible APIs); remove it."""
     return re.sub(r"<think>.*?</think>", "", text or "", flags=re.S).strip()
 
 
 def parse_json(raw: str) -> Any:
-    """尽量从模型输出里抠出 JSON。"""
+    """Extract JSON from the model output as best we can."""
     raw = strip_think(raw or "").strip()
     if not raw:
         raise LLMError(i18n.t("模型返回为空。"))

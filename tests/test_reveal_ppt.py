@@ -1,6 +1,6 @@
-"""逐条出现（用本机 PowerPoint）：导入 → 每页的条目 → 配音 → 渲染。用的都是复制到工作目录的 PPT。
+"""Reveal one by one with the local PowerPoint: import → items per slide → voice-over → render. All decks are copies in the work folder.
 
-会启动 PowerPoint，所以只在 PowerPoint 没开着时跑（run_all.py --ppt 会先检查），用完只关自己开的。"""
+Starts PowerPoint, so it only runs while PowerPoint isn't open (run_all.py --ppt checks first) and quits only the instance it started."""
 import os
 import shutil
 import subprocess
@@ -27,7 +27,7 @@ from backend import main, storage  # noqa: E402
 from backend.services import llm, slides  # noqa: E402
 
 
-def _no_ai(*a, **k):                 # 测试不花 AI 的钱：渲染前的对齐直接跳过
+def _no_ai(*a, **k):                 # tests never spend AI credits: skip the alignment before rendering
     raise llm.LLMError("test: no AI")
 
 
@@ -54,7 +54,7 @@ def wait(j, timeout=1200):
 
 
 def pp_running(wait=15):
-    """PowerPoint 退出要几秒：最多等 wait 秒。"""
+    """PowerPoint takes a few seconds to quit: wait at most `wait` seconds."""
     for _ in range(wait * 2):
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq POWERPNT.EXE"], capture_output=True, text=True).stdout
         if "POWERPNT" not in out.upper():
@@ -78,7 +78,7 @@ def import_deck(path, name, reveal=True, selected=None):
     return man, r, time.time() - t0
 
 
-# 内部真实 PPT 的几节（tests/private/，不提交）：有就一起测，没有就跳过
+# sections using a real internal deck (tests/private/, not committed): included if present, skipped otherwise
 PRIVATE = Path(__file__).parent / "private" / "reveal_ppt_deck.py"
 if PRIVATE.exists() and (SP / "fx" / "deck.pptx").exists():
     exec(compile(PRIVATE.read_text(encoding="utf-8"), str(PRIVATE), "exec"))

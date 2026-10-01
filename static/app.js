@@ -1,4 +1,4 @@
-/* StepCast 编辑器前端 */
+/* StepCast editor frontend */
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -8,8 +8,8 @@ const S = {
   stepId: null,
   settings: {},
   health: null,
-  llmDrafts: {},         // 设置里各家 AI 服务商还没保存的修改
-  llmModels: {},         // 「获取模型列表」拿到的结果
+  llmDrafts: {},         // unsaved changes to each AI provider in the settings
+  llmModels: {},         // results of "Fetch model list"
   voices: [],
   languages: [],
   job: null,
@@ -48,12 +48,12 @@ function toast(msg, bad = false) {
   box._h = setTimeout(() => box.classList.remove('show'), bad ? 5200 : 2600);
 }
 
-/* ---------- 启动 ---------- */
+/* ---------- start-up ---------- */
 
 async function boot() {
   bindUI();
   await Promise.all([loadHealth(), loadSettings(), loadLanguages()]);
-  loadVoices();                                  // 需要联网，不阻塞
+  loadVoices();                                  // needs the internet, don't block
   const pid = new URLSearchParams(location.search).get('p');
   const list = (await api('/api/projects')).projects;
   if (pid) await openProject(pid);
@@ -81,7 +81,7 @@ async function loadSettings() {
   fillSettingsForm();
 }
 
-/** 语言下拉框的选项：中文在最前，然后「欧洲语言」「其他语言」两组（顺序由后端定） */
+/** Options of a language dropdown: Chinese first, then the groups "European languages" and "Other languages" (order defined by the backend) */
 function langOptions(withCode = false) {
   const opt = (l) => `<option value="${l.code}">${l.name}${withCode ? ` (${l.code})` : ''}</option>`;
   const group = (g) => S.languages.filter(l => (l.group || 'other') === g).map(opt).join('');
@@ -97,15 +97,15 @@ async function loadLanguages() {
   syncLanguageFields();
 }
 
-/** 设置里的「解说语言 / 音色」按保存的值显示。
- *  设置、语言列表、音色列表是同时去取的，谁先回来不一定。以前语言列表先到时下拉框就停在第一项
- *  「简体中文」，而填设置的时候又不管这两项，于是每次打开都显示中文，这时点保存就真把中文存进去了。
- *  现在三个地方取回来都调这里，以最后能凑齐的为准。 */
+/** Show the saved "narration language / voice" in the settings.
+ *  Settings, language list and voice list are fetched at the same time and may arrive in any order. When the language list arrived first,
+ *  the dropdown used to stay on the first item "简体中文", and filling in the settings ignored these two fields, so Chinese was shown every time and saving really stored it.
+ *  Now all three call this when they arrive, and the last one to complete the set wins. */
 function syncLanguageFields() {
   const lang = S.settings && S.settings.language;
   const sel = $('#sLang');
   if (!lang || !sel.options.length) return;
-  if (![...sel.options].some(o => o.value === lang)) {       // 存的语言不在列表里也照样显示，不然会变成空白
+  if (![...sel.options].some(o => o.value === lang)) {       // a saved language missing from the list is still shown, otherwise the field would be blank
     sel.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(lang)}">${escapeHtml(lang)}</option>`);
   }
   sel.value = lang;
@@ -129,7 +129,7 @@ function fillVoiceSelect(sel, locale, selected) {
   if (!S.voices.length) return;
   const lang = (locale || '').split('-')[0].toLowerCase();
   const loc = (locale || '').toLowerCase();
-  // 同一种语言里，和所选地区完全一样的排前面（选 English (UK) 时先给英式口音，而不是澳洲的）
+  // within one language, voices of exactly the chosen region come first (English (UK) offers British accents before Australian ones)
   const speaks = (v) => v.locale.toLowerCase().startsWith(lang) || (v.langs || []).includes(lang);
   const mine = S.voices.filter(speaks)
     .sort((a, b) => (b.locale.toLowerCase() === loc) - (a.locale.toLowerCase() === loc));
@@ -142,9 +142,9 @@ function fillVoiceSelect(sel, locale, selected) {
   sel.innerHTML =
     (mine.length ? `<optgroup label="${t('当前语言')}">${mine.map(opt).join('')}</optgroup>` : '') +
     `<optgroup label="${t('其他语言')}">${rest.map(opt).join('')}</optgroup>`;
-  // 重新填完选项后浏览器会自动选中第一项，所以要明确挑：传进来的 > 这个地区的推荐音色 > 同语言第一个
+  // after refilling the options the browser selects the first one, so choose explicitly: the one passed in > the recommended voice for this region > the first one of the language
   const has = (name) => name && S.voices.some(v => v.name === name);
-  // 正在用的音色不在列表里（比如那家配音服务的 Key 删了）：照样显示出来，别悄悄换成别的音色
+  // the voice in use isn't in the list (e.g. the key of its voice service was deleted): show it anyway instead of silently switching to another voice
   if (selected && !has(selected)) {
     sel.insertAdjacentHTML('afterbegin',
       `<option value="${escapeHtml(selected)}">${escapeHtml(selected)} · ${t('当前设置（列表里没有）')}</option>`);
@@ -157,7 +157,7 @@ function fillVoiceSelect(sel, locale, selected) {
   if (want) sel.value = want;
 }
 
-/* ---------- 项目 ---------- */
+/* ---------- projects ---------- */
 
 async function openProject(pid) {
   await flushSaves();
@@ -178,7 +178,7 @@ async function openProject(pid) {
 
 async function refreshProject(keepStep = true) {
   if (!S.project) return;
-  await flushSaves();             // 先把没保存的修改提交，再拉最新数据，不然会被旧数据盖住
+  await flushSaves();             // submit unsaved changes first, then fetch the latest data, otherwise they'd be overwritten by old data
   const sid = S.stepId;
   S.project = await api('/api/projects/' + S.project.id);
   if (keepStep && (isCard(sid) || S.project.steps.some(s => s.id === sid))) S.stepId = sid;
@@ -221,14 +221,14 @@ async function showProjects() {
   });
 }
 
-/* ---------- 步骤列表 ---------- */
+/* ---------- step list ---------- */
 
 const KIND_LABEL = {
   click: t('点击'), input: t('输入'), key: t('按键'), navigate: t('打开页面'),
   manual: t('截图'), scroll: t('滚动'), slide: t('幻灯片'), video: t('视频'),
 };
 
-/** 视频实际播放多长（和后端 clips.clip_range 同一套规则）。 */
+/** How long the video actually plays (same rules as clips.clip_range in the backend). */
 function clipLen(c) {
   const total = c.duration || 0;
   const end = c.end > 0 && (!total || c.end <= total) ? c.end : total;
@@ -236,13 +236,13 @@ function clipLen(c) {
   return Math.max(0.1, end - start);
 }
 
-/** 播视频原声的视频步骤：解说不念，「字幕」是视频里讲的话（和后端 Step.plays_clip_audio 同一规则）。 */
+/** Video steps playing their own sound: the narration isn't spoken and the "subtitle" is what is said in the video (same rule as Step.plays_clip_audio in the backend). */
 function playsClipAudio(s) {
   const c = s && s.clip;
   return !!(s && s.kind === 'video' && c && c.file && c.mode !== 'poster' && c.audio !== 'mute' && c.has_audio);
 }
 
-/** 改了解说词：字幕默认跟着一起改；播视频原声的步骤字幕是视频里的讲话，不能被解说覆盖。 */
+/** Narration edited: the subtitle follows by default; for steps playing the video's own sound the subtitle is the speech in the video and must not be overwritten. */
 function narrationPatch(s, text) {
   if (playsClipAudio(s)) return { narration: text };
   $('#fCaption').value = text;
@@ -312,7 +312,7 @@ function renderSteps() {
 
   $$('#stepList .step-card').forEach(card => {
     card.onclick = () => selectStep(card.dataset.id);
-    if (card.classList.contains('card-step')) return;   // 片头片尾不参与排序
+    if (card.classList.contains('card-step')) return;   // intro and outro aren't reorderable
     card.ondragstart = (e) => { e.dataTransfer.setData('text/plain', card.dataset.id); card.style.opacity = .4; };
     card.ondragend = () => { card.style.opacity = 1; $$('.step-card').forEach(c => c.classList.remove('dragover')); };
     card.ondragover = (e) => { e.preventDefault(); card.classList.add('dragover'); };
@@ -344,7 +344,7 @@ function isCard(id = S.stepId) { return id === '__intro__' || id === '__outro__'
 function cardKind() { return S.stepId === '__intro__' ? 'intro' : 'outro'; }
 function cardStyle(kind) { return (S.project && S.project[kind + '_card']) || {}; }
 
-/** 改片头 / 片尾的背景设置（换页、放置方式、叠字、停留时间、恢复默认），然后刷新预览。 */
+/** Change the intro / outro background settings (page, fit, text overlay, display time, reset), then refresh the preview. */
 async function cardRequest(method, suffix, body, done) {
   if (!S.project || !isCard()) return;
   await flushSaves();
@@ -389,7 +389,7 @@ function outroEnabled() {
   return S.settings.outro_enabled !== false;
 }
 
-/* ---------- 保存：同一对象的多次修改合并成一次提交，任何字段都不会被后来的修改冲掉 ---------- */
+/* ---------- saving: several changes to the same object are merged into one request; no field is overwritten by a later change ---------- */
 
 const PENDING = { pid: '', steps: new Map(), project: null, timer: 0 };
 
@@ -453,7 +453,7 @@ function selectStep(id) {
   renderSteps(); renderStage(); renderInspector();
 }
 
-/* ---------- 中间预览 ---------- */
+/* ---------- center preview ---------- */
 
 function viewportOf(s) {
   const ratio = (s.viewport_w && s.img_w) ? s.img_w / s.viewport_w : 1;
@@ -566,7 +566,7 @@ function initHighlightDrag() {
   hl.querySelector('.handle').addEventListener('mousedown', (e) => start(e, 'resize'));
 }
 
-/* ---------- 打码框 ---------- */
+/* ---------- redaction boxes ---------- */
 
 const RD_LABEL = {
   email: t('邮箱'), phone: t('手机号'), id_card: t('身份证'), bank: t('银行卡'),
@@ -725,7 +725,7 @@ function setRedactMode(on) {
   if (!on) drawHighlight();
 }
 
-/* ---------- 右侧属性 ---------- */
+/* ---------- right-hand properties ---------- */
 
 function renderInspector() {
   const card = isCard();
@@ -795,7 +795,7 @@ function saveStep(patch) {
   const s = currentStep();
   if (!s) return;
   if (!patch.target_rect) {
-    // 服务端规则：AI 配音的步骤改了解说词，旧配音作废；原声步骤改文字只是修字幕，录音保留
+    // server rule: editing the narration of an AI-voiced step makes the old voice-over outdated; for own-voice steps a text edit only fixes the subtitle and the recording is kept
     if ('narration' in patch && patch.narration !== s.narration && s.voice_source !== 'own') {
       s.audio = ''; s.audio_duration = 0; s.boundaries = [];
       renderVoiceCard(s);
@@ -807,14 +807,14 @@ function saveStep(patch) {
   queueSave();
 }
 
-/** 输入框正被编辑时不回填，避免光标跳到末尾、吞掉刚打的字 */
+/** Don't refill an input that is being edited, so the cursor doesn't jump to the end and swallow what was just typed */
 function setField(sel, value) {
   const el = $(sel);
   if (document.activeElement === el) return;
   if (el.value !== value) el.value = value;
 }
 
-/* ---------- 任务进度 ---------- */
+/* ---------- job progress ---------- */
 
 function setProgress(frac, text) {
   $('#progressBar').firstElementChild.style.width = Math.round(frac * 100) + '%';
@@ -829,7 +829,7 @@ function busy(on) {
 
 async function runJob(path, body, label) {
   if (!S.project) return;
-  await flushSaves();             // 任务要读到你刚改的文字
+  await flushSaves();             // the job must see the text you just changed
   busy(true);
   setProgress(0.02, label + '…');
   let job;
@@ -839,7 +839,7 @@ async function runJob(path, body, label) {
   return pollJob(job.id, label);
 }
 
-/** 轮询一个后台任务直到结束。onTick 可用来同步弹窗里的进度文字。 */
+/** Poll a background job until it ends. onTick can sync the progress text in a dialog. */
 const POLLING = new Map();
 const JOB_LABELS = new Map();
 
@@ -857,7 +857,7 @@ function pollJob(jobId, label, { refresh = true, onTick = null } = {}) {
   return p;
 }
 
-/* ---------- 停止任务 ---------- */
+/* ---------- stopping jobs ---------- */
 
 function updateStopButton() {
   const btn = $('#btnStopJob');
@@ -905,7 +905,7 @@ function pollJobInner(jobId, label, refresh, onTick) {
         resolve(null);
         return;
       }
-      // 做完了但有需要注意的地方（比如某几段配音文件坏了、按静音生成）：用醒目的提示代替「完成」
+      // finished but with something to note (e.g. some voice-over files were broken and rendered silent): show a prominent notice instead of "done"
       if (j.result && j.result.warning) toast(j.result.warning, true);
       else toast(t('{label}完成', { label }));
       if (refresh && S.project) await refreshProject();
@@ -929,7 +929,7 @@ const JOB_LABEL = {
   slides_create: t('生成幻灯片视频'), asr_prepare: t('准备语音识别模型'),
 };
 
-/** 打开项目时，如果后台已经有它的任务在跑（比如刚录完的讲解在识别），接上进度。 */
+/** When opening a project whose job is already running in the background (e.g. a just-recorded narration being transcribed), attach to its progress. */
 async function watchProjectJobs() {
   if (!S.project || S.jobActive) return;
   try {
@@ -939,7 +939,7 @@ async function watchProjectJobs() {
   } catch (e) { /* */ }
 }
 
-/* ---------- 录制状态轮询 ---------- */
+/* ---------- recording status polling ---------- */
 
 async function pollRecording() {
   try {
@@ -953,11 +953,11 @@ async function pollRecording() {
       }
     } else { b.textContent = ''; b.className = 'badge'; }
     watchProjectJobs();
-  } catch (e) { /* 服务没开 */ }
+  } catch (e) { /* service not running */ }
   setTimeout(pollRecording, 2500);
 }
 
-/* ---------- 设置表单 ---------- */
+/* ---------- settings form ---------- */
 
 function shortName(name) { return (name || t('AI 模型')).replace(/\s*[（(].*?[）)]/g, ''); }
 
@@ -966,13 +966,13 @@ function aiName() {
   return shortName(ai.name);
 }
 
-/* ---------- AI 服务商设置 ---------- */
+/* ---------- AI provider settings ---------- */
 
 function llmPreset(pid) {
   return ((S.settings.llm || {}).providers || []).find(p => p.id === pid);
 }
 
-/* 商用配音服务（豆包、MiniMax、通义）的 Key */
+/* Keys of the paid voice services (Doubao, MiniMax, Qwen) */
 function ttsDraft(id) {
   S.ttsDrafts = S.ttsDrafts || {};
   return S.ttsDrafts[id] || (S.ttsDrafts[id] = {});
@@ -1097,7 +1097,7 @@ function llmSettingsPatch() {
     if (d.clear_key) e.clear_key = true;
     if (Object.keys(e).length) out[pid] = e;
   }
-  // 当前选中的这家：模型框里显示的就是要保存的（哪怕是预设的默认值）
+  // the currently selected provider: what the model field shows is what gets saved (even a preset default)
   const cur = $('#sProvider').value;
   out[cur] = { ...(out[cur] || {}), model: $('#sModel').value.trim() };
   return out;
@@ -1131,16 +1131,16 @@ async function saveSettings() {
     hf_endpoint: $('#sHfEndpoint').value.trim(),
     asr_remove_fillers: $('#sFillers').checked,
   };
-  // 列表还没加载出来（比如音色要联网取）时下拉框是空的：空值不提交，保持原来的设置
+  // while a list hasn't loaded yet (e.g. voices need the internet) the dropdown is empty: don't submit empty values, keep the previous setting
   if (!patch.language) delete patch.language;
   if (!patch.voice) delete patch.voice;
   S.settings = await api('/api/settings', { method: 'POST', body: patch });
   $('#sKey').value = '';
   fillSettingsForm();
-  if (Object.keys(patch.tts_services || {}).length) loadVoices();     // 填了配音服务的 Key：它的音色要加进下拉框
+  if (Object.keys(patch.tts_services || {}).length) loadVoices();     // a voice service key was entered: its voices must be added to the dropdowns
   await loadHealth();
-  // 这里是全局默认值。只有你在这次保存里真的改了语言 / 音色，才同步到当前打开的项目，
-  // 否则一个已翻译成英文的项目会被悄悄改回默认的中文音色。
+  // these are global defaults. Only if you really changed language / voice in this save are they applied to the open project,
+  // otherwise a project already translated to English would silently get the default Chinese voice again.
   const langChanged = !!patch.language && patch.language !== prevLang;
   const voiceChanged = !!patch.voice && patch.voice !== prevVoice;
   if (S.project && (langChanged || voiceChanged)) {
@@ -1154,9 +1154,9 @@ async function saveSettings() {
   $('#mSettings').classList.add('hidden');
 }
 
-/* ---------- 事件绑定 ---------- */
+/* ---------- event bindings ---------- */
 
-/* ---------- 界面语言 ---------- */
+/* ---------- interface language ---------- */
 
 function bindLanguageSwitch() {
   const sel = $('#uiLang');
@@ -1184,7 +1184,7 @@ function bindUI() {
   initRedactDrag();
   bindVoiceAndImport();
 
-  // 打码
+  // redaction
   $('#btnRedactMode').onclick = () => setRedactMode(!S.redactMode);
   $('#btnRedactHere').onclick = () => setRedactMode(true);
   $('#btnRedactScan').onclick = async () => {
@@ -1269,7 +1269,7 @@ function bindUI() {
     S.audio.play().catch(() => {});
   };
 
-  // 片头 / 片尾
+  // intro / outro
   $('#pjTitle').oninput = () => saveProject({ title: $('#pjTitle').value });
   $('#pjSubtitle').oninput = () => saveProject({ subtitle: $('#pjSubtitle').value });
   $('#pjIntro').oninput = () => saveProject({ intro: $('#pjIntro').value });
@@ -1296,7 +1296,7 @@ function bindUI() {
     $('#pjTTS').disabled = false;
   };
 
-  // 片头 / 片尾背景
+  // intro / outro background
   $('#pjBgUpload').onclick = () => $('#pjBgFile').click();
   $('#pjBgFile').onchange = async () => {
     const f = $('#pjBgFile').files[0];
@@ -1315,7 +1315,7 @@ function bindUI() {
   $('#pjBgText').onchange = () => cardRequest('PATCH', '', { show_text: $('#pjBgText').checked });
   $('#pjBgDur').onchange = () => cardRequest('PATCH', '', { duration: Number($('#pjBgDur').value) || 0 });
 
-  // 视频步骤
+  // video steps
   $('#vbMode').onchange = () => videoPatch({ mode: $('#vbMode').value });
   $('#vbAudio').onchange = () => videoPatch({ audio: $('#vbAudio').value });
   $('#vbStart').onchange = () => videoPatch({ start: Number($('#vbStart').value) || 0 });
@@ -1351,7 +1351,7 @@ function bindUI() {
     if (r && r.step) selectStep(r.step);
   };
 
-  // 属性表单
+  // properties form
   $('#fTitle').oninput = () => saveStep({ title: $('#fTitle').value });
   $('#fNarration').oninput = () => saveStep(narrationPatch(currentStep(), $('#fNarration').value));
   $('#fCaption').oninput = () => saveStep({ caption: $('#fCaption').value });
@@ -1370,7 +1370,7 @@ function bindUI() {
         method: 'POST', body: { instruction: $('#fRewrite').value || t('更简洁自然一些'), apply: true },
       });
       if (!playsClipAudio(s)) { s.caption = r.text; $('#fCaption').value = r.text; }
-      if (r.lines) s.lines = r.lines;             // 两人问答：改写的是整段台词
+      if (r.lines) s.lines = r.lines;             // two-person Q&A: the whole dialogue was rewritten
       s.narration = r.text; s.audio = ''; s.audio_duration = 0;
       s.voice_source = 'tts';
       $('#fNarration').value = r.text;
@@ -1393,7 +1393,7 @@ function bindUI() {
     $('#btnStepTTS').disabled = false;
   };
 
-  // 底部动作
+  // bottom actions
   $('#btnScript').onclick = openScriptModal;
   $('#gNotes').onchange = () => {
     $('#gOverwrite').checked = $('#gNotes').value === 'verbatim';
@@ -1430,7 +1430,7 @@ function bindUI() {
 
   $('#btnTranslate').onclick = () => {
     fillVoiceSelect($('#tVoice'), $('#tLang').value);
-    // 幻灯片项目不翻译现有解说：按 PPT 原文直接用目标语言重写（后端 switch_language）
+    // slide projects don't translate the existing narration: it is rewritten in the target language from the deck (backend switch_language)
     const slides = S.project.source === 'slides';
     $('#tHint').textContent = slides
       ? t('幻灯片项目不翻译现在的解说，而是按 PPT 原文（页面文字和演讲者备注）直接用目标语言重写；插入的视频步骤照常翻译。会替换当前脚本并清空已生成的语音。')
@@ -1470,9 +1470,9 @@ function bindUI() {
   bindSub2();
   $('#btnCloseVideo').onclick = closeVideoModal;
 
-  // 设置弹窗
+  // settings dialog
   $('#btnSettings').onclick = () => {
-    S.llmDrafts = {};                // 丢掉上次没保存就关掉的 AI 设置草稿
+    S.llmDrafts = {};                // discard AI settings drafts left from closing without saving
     $('#sProvider').value = (S.settings.llm || {}).provider;
     renderProviderFields();
     $('#mSettings').classList.remove('hidden');
@@ -1574,7 +1574,7 @@ function bindUI() {
   });
 }
 
-/* ---------- 生成解说弹窗（PPT 项目可以改用备注原文） ---------- */
+/* ---------- write-narration dialog (slide projects can use the notes as they are) ---------- */
 
 function slideNoteStats() {
   const steps = S.project.steps.filter(s => s.include);
@@ -1669,7 +1669,7 @@ function escapeHtml(s) {
 }
 
 /* =====================================================================
- * 语音输入：录我的声音 / 上传音频 / 口述转文字 / 改用 AI 配音
+ * Voice input: record my voice / upload audio / dictate / switch to AI voice
  * ===================================================================== */
 
 function renderVoiceCard(s) {
@@ -1698,7 +1698,7 @@ function renderSlideBox(s) {
   renderRevealBox(s);
 }
 
-/** 逐条出现：整个项目的开关 + 这一页的开关。数据是导入 PPT 时用 PowerPoint 生成的。 */
+/** Reveal one by one: the project-wide switch + this slide's switch. The data is generated with PowerPoint when importing the deck. */
 function hasReveal(s) { return !!(s && s.reveal && (s.reveal.items || []).length >= 2); }
 
 function renderRevealBox(s) {
@@ -1718,7 +1718,7 @@ function renderRevealBox(s) {
 function renderVideoBox(s) {
   const isVideo = s.kind === 'video';
   $('#videoBox').classList.toggle('hidden', !isVideo);
-  $('#rdSection').classList.toggle('hidden', isVideo);         // 视频画面上不能打码
+  $('#rdSection').classList.toggle('hidden', isVideo);         // no redaction on video frames
   if (!isVideo) return;
   ['#fZoomWrap', '#fHighlightWrap', '#fNoteWrap'].forEach(id => $(id).classList.add('hidden'));
   const c = s.clip || {};
@@ -1918,7 +1918,7 @@ async function vrConfirm() {
 function insertNarration(text) {
   const ta = $('#fNarration');
   const cur = ta.value.trim();
-  // 中日文接着写不加空格、用全角逗号；其他语言用半角逗号加空格
+  // Chinese / Japanese continue without spaces and use full-width commas; other languages use a comma plus a space
   const cjk = /^(zh|ja)/.test(S.project.language || '');
   const joiner = /[。！？.!?]$/.test(cur) ? (cjk ? '' : ' ') : (cjk ? '，' : ', ');
   ta.value = cur ? cur + joiner + text : text;
@@ -1940,12 +1940,12 @@ async function uploadStepVoice(s, form) {
 }
 
 /* =====================================================================
- * PPT / PDF 转视频
+ * PPT / PDF to video
  * ===================================================================== */
 
 const IM = { manifest: null, selected: new Set(), notesPicked: false, autoRef: false };
 
-// 粗判文字语言：和后端 backend/services/langdetect.py 同一套规则，改的时候两边一起改（tests/test_languages.py 会对比）
+// Rough language detection: same rules as backend/services/langdetect.py; change both together (tests/test_languages.py compares them)
 const LANG_STOP = Object.fromEntries(Object.entries({
   en: 'the and is to of you this that with for it are on we our can',
   de: 'der die und das ist nicht mit sie ein eine zu auf für wir den',
@@ -1977,13 +1977,13 @@ const LANG_STOP = Object.fromEntries(Object.entries({
   mt: 'il l u ta li fil tal biex huwa hija għal minn ma din dan jew kif wkoll',
   tr: 've bir bu da de için ile olarak çok daha ne gibi var ama en olan kadar mı',
 }).map(([k, v]) => [k, new Set(v.split(' '))]));
-// 靠虚词分不太清的近亲语言：判断成其中一种时，对同组的其他语言也算「同一种」
+// Closely related languages that function words can't separate well: detecting one of them counts as "the same" for the others in its group
 const LANG_FAMILIES = [['da', 'nb', 'sv'], ['cs', 'sk'], ['hr', 'bs', 'sr', 'sl'], ['gl', 'pt'], ['sr', 'mk']];
 const CYRILLIC = ['ru', 'uk', 'bg', 'sr', 'mk'];
 const SR_WORDS = new Set('је шта овај ова који која ће сам'.split(' '));
 const MK_WORDS = new Set('е што овој оваа кој која ќе сум'.split(' '));
 
-/** 两个基础语言代码算不算同一种（相同、近亲，或者「分不清的西里尔文」对上用西里尔字母的语言） */
+/** Whether two base language codes count as the same (identical, closely related, or "undecidable Cyrillic" against a Cyrillic-script language) */
 function langRelated(a, b) {
   if (a === b) return true;
   if (a === 'cyrl' || b === 'cyrl') return CYRILLIC.includes(a === 'cyrl' ? b : a);
@@ -2004,7 +2004,7 @@ function cyrillicLang(text) {
   return t.includes('ъ') ? 'bg' : 'cyrl';
 }
 
-/** 一段文字是什么语言（zh、en……）；西里尔字母分不清是哪种时 'cyrl'；判断不出来返回 '' */
+/** The language of a text (zh, en …); 'cyrl' for Cyrillic that can't be pinned down; '' if undecidable */
 function guessLang(text) {
   text = text || '';
   const letters = (text.match(/\p{L}/gu) || []).length;
@@ -2026,21 +2026,21 @@ function guessLang(text) {
     .map(([code, set]) => [words.filter(w => set.has(w)).length / words.length, code])
     .sort((a, b) => (b[0] - a[0]) || (a[1] < b[1] ? -1 : 1));
   const [best, code] = scores[0];
-  // 和「不是近亲的第二名」比：丹麦语 / 挪威语这种分不太清的，只要确定是这一组就行
+  // compare with the best "not closely related" runner-up: for Danish / Norwegian, which are hard to separate, knowing the group is enough
   const rival = (scores.slice(1).find(([, c]) => !langRelated(c, code)) || [0])[0];
   return best >= 0.06 && best >= rival * 1.3 ? code : '';
 }
 
-/** 一批备注大多是什么语言 */
+/** The language most notes in a set are written in */
 function notesLang(notes) {
   const c = {};
   notes.forEach(x => { const g = guessLang(x); if (g) c[g] = (c[g] || 0) + 1; });
   return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
 }
 
-/** 语言名：完整代码（en-US）给出列表里的名字；只有基础代码（en，粗判出来的备注语言）时去掉地区（English） */
+/** Language name: a full code (en-US) gives the name from the list; a base code only (en, a detected notes language) drops the region (English) */
 function langLabel(code) {
-  if (code === 'cyrl') code = 'ru';          // 分不清是哪种西里尔文：多半是俄文
+  if (code === 'cyrl') code = 'ru';          // undecidable Cyrillic: most likely Russian
   const exact = (S.languages || []).find(x => x.code === code);
   if (exact) return exact.name;
   const l = (S.languages || []).find(x => x.code.split('-')[0] === code);
@@ -2112,7 +2112,7 @@ function renderImport() {
   const noteCount = chosen.filter(x => x.notes).length;
   const missCount = chosen.length - noteCount;
   const anyNotes = m.with_notes > 0;
-  // 两人问答：没有「备注原文就是解说」这一项，音色分主持人、讲师两个
+  // two-person Q&A: no "notes as narration" option, and separate voices for host and expert
   const dlg = $('#imMode').value === 'dialogue';
   $('#imNotes').querySelector('option[value="verbatim"]').hidden = dlg;
   $('#imVoiceWrap').classList.toggle('hidden', dlg);
@@ -2121,8 +2121,8 @@ function renderImport() {
   const nl = notesLang(chosen.filter(x => x.notes).map(x => x.notes));
   const target = ($('#imLang').value || '').split('-')[0];
   const otherLang = !!nl && !langRelated(nl, target);
-  // 「备注原文」不合适时（两人问答、备注和解说不是同一种语言）自动改成「AI 参考备注」；
-  // 条件不在了（比如解说语言又换成和备注一样）就改回来。自己选过的不动
+  // when "use the notes as narration" doesn't fit (Q&A mode, notes in another language than the narration) switch to "AI rewrites the notes" automatically;
+  // switch back once that no longer applies (e.g. the narration language is changed to the notes' language). A choice made by the user is left alone
   const noVerbatim = dlg || (otherLang && !IM.notesPicked);
   if (noVerbatim && $('#imNotes').value === 'verbatim') {
     $('#imNotes').value = 'reference';
@@ -2137,7 +2137,7 @@ function renderImport() {
     t('已选 {chosen} / {total} 页 · {notes} 页有备注 · 渲染：{engine}',
       { chosen: chosen.length, total: m.count, notes: noteCount, engine: m.engine });
 
-  // PDF 没有备注；PPT 没写备注。两种情况都直说，不让下拉框莫名变灰
+  // PDFs have no notes; this PPT has no notes. Say so in both cases instead of mysteriously greying out the dropdown
   const hint = m.ext === '.pdf'
     ? t('PDF 里没有演讲者备注（PowerPoint 另存为 PDF 时不会把备注带上），解说只能由 AI 根据页面内容来写。想用备注作解说，请直接导入 .pptx 文件。')
     : (!anyNotes ? t('这份 PPT 没有写演讲者备注，解说将由 AI 根据页面内容来写。') : '');
@@ -2151,7 +2151,7 @@ function renderImport() {
   $('#imNotesField').classList.toggle('hidden', !anyNotes);
   $('#imMissingField').classList.toggle('hidden', !(mode === 'verbatim' && missCount > 0));
   const aiPages = mode === 'verbatim' ? (missing === 'ai' ? missCount : 0) : chosen.length;
-  // 「备注原文」模式下，备注不是解说语言的页也要交给 AI（连同备注）用解说语言讲 —— 隐私提示里要算上
+  // in "notes as narration" mode, slides whose notes aren't in the narration language also go to the AI (with their notes) — include them in the privacy hint
   const otherPages = mode === 'verbatim'
     ? chosen.filter(x => { const g = x.notes ? guessLang(x.notes) : ''; return g && !langRelated(g, target); }).length
     : 0;
@@ -2172,11 +2172,11 @@ function renderImport() {
   });
   $('#imCreate').disabled = !chosen.length;
 
-  // 幻灯片里的视频：会变成单独的「视频」步骤；没嵌在 PPT 里的要事后上传
+  // videos in slides become separate "video" steps; videos not embedded in the deck must be uploaded afterwards
   const vids = chosen.flatMap(x => x.videos || []);
   const missingVids = vids.filter(v => v.missing).length;
   $('#imVideosWrap').classList.toggle('hidden', !(m.slides.some(x => (x.videos || []).length)));
-  // 逐条出现要用 PowerPoint 再导出每一页的内容：只有页面本身是 PowerPoint 导出的 PPT 才行
+  // revealing needs PowerPoint to export each slide's content again: only possible when the slides themselves were exported by PowerPoint
   $('#imRevealWrap').classList.toggle('hidden', !(m.ext !== '.pdf' && m.engine === 'PowerPoint'));
   let vh = '';
   if (vids.length && $('#imVideos').checked) {
@@ -2188,7 +2188,7 @@ function renderImport() {
   $('#imVideosHint').textContent = vh;
   $('#imVideosHint').classList.toggle('hidden', !vh);
 
-  // 告诉用户每一页的解说从哪来、会不会联网
+  // tell the user where each slide's narration comes from and whether anything goes online
   const ok = '<span style="color:var(--ok)">●</span> ';
   const warn = '<span style="color:var(--warn)">●</span> ';
   let msg = '';
@@ -2250,10 +2250,10 @@ async function imCreate() {
   $('#imCreate').disabled = false;
 }
 
-/* ---------- 绑定 ---------- */
+/* ---------- bindings ---------- */
 
 function bindVoiceAndImport() {
-  // 录音 / 口述
+  // recording / dictation
   $('#btnRecordVoice').onclick = () => openRecorder('voice');
   $('#btnDictate').onclick = () => openRecorder('dictate');
   $('#vrRec').onclick = vrToggle;
@@ -2272,7 +2272,7 @@ function bindVoiceAndImport() {
     try { await vrPreview(S.vrDevice); } catch (e) { toast(e.message, true); }
   };
 
-  // 上传音频
+  // upload audio
   $('#btnUploadVoice').onclick = () => $('#voiceFile').click();
   $('#voiceFile').onchange = async () => {
     const f = $('#voiceFile').files[0];
@@ -2296,7 +2296,7 @@ function bindVoiceAndImport() {
     await api(`/api/projects/${S.project.id}/steps/${s.id}/voice/ai`, { method: 'POST' });
     s.voice_source = 'tts'; s.audio = ''; s.audio_duration = 0;
     renderInspector();
-    if ((s.narration || '').trim()) $('#btnStepTTS').click();   // 顺手用 AI 重新念一遍
+    if ((s.narration || '').trim()) $('#btnStepTTS').click();   // and let the AI read it again right away
   };
 
   $('#btnVoiceDelete').onclick = async () => {
@@ -2323,7 +2323,7 @@ function bindVoiceAndImport() {
     }],
   ]);
 
-  // 幻灯片备注
+  // slide notes
   $('#fSlideNotes').oninput = () => saveStep({ slide_notes: $('#fSlideNotes').value });
   $('#fRevealAll').onchange = () => {
     saveProject({ settings: { slides_reveal: $('#fRevealAll').checked } });
@@ -2345,7 +2345,7 @@ function bindVoiceAndImport() {
     renderInspector();
   };
 
-  // 语音识别设置
+  // speech recognition settings
   $('#btnSettings').addEventListener('click', refreshAsrState);
   $('#btnAsrPrepare').onclick = async () => {
     await api('/api/settings', { method: 'POST', body: {
@@ -2358,7 +2358,7 @@ function bindVoiceAndImport() {
     refreshAsrState();
   };
 
-  // PPT 导入
+  // PPT import
   $('#btnImportSlides').onclick = openImport;
   $('#btnEmptyImport').onclick = openImport;
   $('#imCancel').onclick = () => $('#mImport').classList.add('hidden');
@@ -2401,7 +2401,7 @@ async function refreshAsrState() {
 }
 
 
-/* ---------- 两人问答 ---------- */
+/* ---------- two-person Q&A ---------- */
 
 function isDialogue() {
   return !!(S.project && (S.project.settings || {}).dialogue);
@@ -2413,7 +2413,7 @@ function speakerOf(role) {
   return sp || { role, name: role === 'host' ? t('主持人') : t('讲师'), voice: '' };
 }
 
-/** 某种语言里挑一个男声：先用推荐的，没有就用这种语言的第一个男声 */
+/** Pick a male voice for a language: the recommended one first, otherwise the language's first male voice */
 function maleVoice(locale) {
   const want = (S.voiceMale || {})[locale];
   if (want && S.voices.some(v => v.name === want)) return want;
@@ -2432,7 +2432,7 @@ function syncDialogueUI() {
   $('#btnSpeakers').classList.toggle('hidden', !isDialogue());
 }
 
-/** 这一步的台词。老数据只有整段解说时，当作主持人的一句（和配音的规则一样） */
+/** This step's dialogue lines. Old data with only a whole narration counts as one line by the host (same rule as the voice-over) */
 function stepLines(s) {
   if (s.lines && s.lines.length) return s.lines;
   return (s.narration || '').trim() ? [{ who: 'host', text: s.narration }] : [];
@@ -2442,7 +2442,7 @@ function renderDialogue(s) {
   const box = $('#dlgLines');
   $('#dlgAddHost').textContent = '＋ ' + speakerOf('host').name;
   $('#dlgAddExpert').textContent = '＋ ' + speakerOf('expert').name;
-  // 正在这一步的台词里打字：不重画（光标会跳）。换了一步一定重画，免得把上一步的台词当成这一步的来改
+  // typing in this step's lines: don't redraw (the cursor would jump). A different step always redraws, so the previous step's lines are never edited as this step's
   if (box.dataset.sid === s.id && box.contains(document.activeElement)
       && document.activeElement.tagName === 'TEXTAREA') return;
   box.dataset.sid = s.id;
@@ -2461,7 +2461,7 @@ function renderDialogue(s) {
     : `<p class="small muted">${t('还没有台词：点下面的按钮加一句，或者点「① 生成解说」让 AI 写。')}</p>`;
 }
 
-/** 改了台词：解说 = 台词全文，字幕没单独改过就跟着；AI 配音的旧配音作废 */
+/** Lines edited: narration = all lines joined, the subtitle follows unless edited separately; the old AI voice-over is outdated */
 function saveLines(s, lines) {
   s.lines = lines.map(x => ({ who: x.who, text: x.text }));
   const text = s.lines.map(x => x.text.trim()).filter(Boolean).join('\n');
@@ -2479,7 +2479,7 @@ function saveLines(s, lines) {
   queueSave();
 }
 
-/** 试听：text 为空时服务端用这个音色语言的示例句 */
+/** Preview: with empty text the server uses a sample sentence in the voice's language */
 async function playText(text, voice) {
   toast(t('正在合成试听…'));
   try {
@@ -2493,7 +2493,7 @@ async function playText(text, voice) {
   } catch (e) { toast(e.message, true); }
 }
 
-/* 讲者弹窗 */
+/* speakers dialog */
 
 function spkCard(role) { return $(`#mSpeakers .spk-card[data-role="${role}"]`); }
 
@@ -2538,7 +2538,7 @@ function bindDialogue() {
     };
   });
 
-  // 台词编辑
+  // dialogue editing
   const box = $('#dlgLines');
   box.oninput = (e) => {
     const row = e.target.closest('.dlg-row');
@@ -2570,7 +2570,7 @@ function bindDialogue() {
     const s = currentStep();
     if (!s) return;
     const lines = [...stepLines(s).map(x => ({ ...x })), { who, text: '' }];
-    s.lines = lines;                       // 空句先只放在界面上，写了字才保存
+    s.lines = lines;                       // empty lines live only in the UI at first; they are saved once they have text
     renderDialogue(s);
     const tas = $$('#dlgLines textarea');
     if (tas.length) tas[tas.length - 1].focus();
@@ -2580,7 +2580,7 @@ function bindDialogue() {
 }
 
 
-/* ---------- 第二语言字幕（外挂） ---------- */
+/* ---------- second-language subtitles (external) ---------- */
 
 const SUB2 = { state: null, cues: {}, cur: [] };
 
@@ -2619,7 +2619,7 @@ function renderSub2() {
     + ok.map(x => `<option value="${esc(x.lang)}">${esc(x.name)}</option>`).join('');
   $('#vSub2Preview').value = ok.some(x => x.lang === keep) ? keep : '';
   const have = new Set(ok.map(x => x.lang));
-  // 勾选框按「中文 → 欧洲语言 → 其他语言」分组，组名占一整行
+  // checkboxes grouped as "Chinese → European languages → other languages"; group names take a whole row
   const box = (l) => `
     <label class="switch small"><input type="checkbox" value="${esc(l.code)}"> ${esc(l.name)}${have.has(l.code) ? ' ✓' : ''}</label>`;
   const section = (g, title) => {
@@ -2655,8 +2655,8 @@ async function generateSub2(langs) {
   $('#btnSub2Gen').disabled = false;
 }
 
-const SUB2_GAP = 0;                                       // 第二字幕的底框紧挨着主字幕的底框（和播放包一致）
-const SUB2_UPRIGHT = ['ar'];  // 第二字幕默认斜体，阿拉伯文除外（和播放包一致）
+const SUB2_GAP = 0;                                       // the second subtitle's box sits directly below the main subtitle's box (same as the web player package)
+const SUB2_UPRIGHT = ['ar'];  // second subtitles are italic by default, except Arabic (same as the web player package)
 
 async function setSub2Preview(lang) {
   const upright = SUB2_UPRIGHT.includes((lang || '').split('-')[0]);
@@ -2674,8 +2674,8 @@ async function setSub2Preview(lang) {
   buildSub2Track();
 }
 
-/* 用浏览器自己的全屏（播放器右下角的全屏按钮、双击画面）时，页面上的字幕层显示不出来：
- * 这时把第二字幕交给浏览器自己显示（同样放在主字幕下面） */
+/* In the browser's own full screen (the player's full-screen button, double-click) the page's subtitle layer can't be shown:
+ * hand the second subtitle to the browser to display instead (also right below the main subtitle) */
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
 const vNativeFs = () => fsEl() === $('#vPlayer') || !!$('#vPlayer').webkitDisplayingFullscreen;
 
@@ -2701,7 +2701,7 @@ function buildSub2Track() {
   syncSub2Track();
 }
 
-/** 请求全屏：成功、失败都有交代。有的内嵌浏览器既不答应也不拒绝，1.5 秒还没全屏就当失败 */
+/** Request full screen with a clear outcome either way. Some embedded browsers neither grant nor refuse; not in full screen after 1.5 s counts as refused */
 function requestFs(el) {
   const f = el.requestFullscreen || el.webkitRequestFullscreen;
   if (!f || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return Promise.reject(new Error('no'));
@@ -2711,22 +2711,22 @@ function requestFs(el) {
   });
 }
 
-/** ⛶：整块（视频 + 第二字幕层）全屏；浏览器不让时退一步用视频自己的全屏 */
+/** ⛶: full screen for the whole stage (video + second-subtitle layer); if the browser refuses, fall back to the video's own full screen */
 function toggleVideoFullscreen() {
   if (fsEl()) return (document.exitFullscreen || document.webkitExitFullscreen).call(document);
   requestFs($('#vStage')).catch(() => requestFs($('#vPlayer')))
     .catch(() => toast(t('浏览器不允许全屏'), true));
 }
 
-/** 关闭视频窗口：退出全屏、暂停（不然窗口关了声音还在放） */
+/** Close the video window: leave full screen and pause (otherwise the sound keeps playing after closing) */
 function closeVideoModal() {
   if (fsEl()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
   $('#vPlayer').pause();
   $('#mVideo').classList.add('hidden');
 }
 
-/** 第二字幕紧贴在主字幕下面（渲染时记下了主字幕底边的位置），字号约为画面高度的 2.8%；
- *  偶尔两行放不下时往上挪一点，不超出画面。和网页播放包里的播放页是同一套规则 */
+/** The second subtitle sits right below the main one (rendering recorded the main subtitle's bottom edge); font size about 2.8% of the frame height;
+ *  if two lines occasionally don't fit, it moves up a little so it stays inside the frame. Same rules as the player page in the web player package */
 function layoutSub2() {
   const v = $('#vPlayer'), box = $('#vSub2Text');
   const W = v.clientWidth, H = v.clientHeight, vw = v.videoWidth || 16, vh = v.videoHeight || 9;

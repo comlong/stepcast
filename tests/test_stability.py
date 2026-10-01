@@ -1,6 +1,6 @@
-"""稳定性 / 可靠性：真实服务进程上反复渲染、并发任务、中途停止、渲染时编辑、并发保存、文件缺失、重启。
+"""Stability / reliability on a real server process: repeated renders, concurrent jobs, stopping halfway, editing while rendering, concurrent saves, missing files, restarts.
 
-不碰用户的项目和 config.json（独立数据目录 stab_data、端口 8771），不调用 PowerPoint，不联网配音（配音用本地生成的音频）。
+Doesn't touch the user's projects or config.json (separate data folder stab_data, port 8771), never calls PowerPoint, no online voice-over (audio is generated locally).
 """
 import json
 import os
@@ -110,7 +110,7 @@ def stop_server():
         time.sleep(0.3)
 
 
-# ---------------------------------------------------------------- 准备数据
+# ---------------------------------------------------------------- prepare data
 print("\n== 准备：独立数据目录里建测试项目 ==")
 shutil.rmtree(DATA, ignore_errors=True)
 PROJ.mkdir(parents=True)
@@ -145,7 +145,7 @@ def make_capture_project(name, n=12):
         s.target = Target(tag="button", text=f"按钮{i}", rect=Rect(x=bx, y=by, w=160, h=44))
         s.point = {"x": bx + 80, "y": by + 22}
         s.narration = s.caption = f"第 {i + 1} 步，点击橙色的按钮{i}，然后看看页面上发生的变化。"
-        # 配音：本地生成一段音频（不联网）
+        # voice-over: generate audio locally (offline)
         audio = storage.audio_dir(p.id)
         audio.mkdir(parents=True, exist_ok=True)
         dur = 2.0 + (i % 4) * 0.5
@@ -168,7 +168,7 @@ check("启动服务（真实进程）", start_server())
 spid = server_pid()
 print(f"     服务进程 PID {spid}")
 
-# 导入带视频的 PPT、插入几种视频
+# import a deck with videos and insert several kinds of video
 with open(SP / "vid" / "deck_with_video.pptx", "rb") as f:
     man = wait_job(requests.post(f"{B}/api/import/slides", files={"file": ("视频.pptx", f)}, headers=H).json())["result"]
 r = wait_job(requests.post(f"{B}/api/import/slides/{man['id']}/create",
@@ -181,7 +181,7 @@ for f_ in (SP / "vid2" / "rotated.mp4", SP / "vid2" / "nodur.webm", SP / "vid" /
 kinds = [s["kind"] for s in proj(BV)["steps"]]
 check("带视频的项目建好（幻灯片 + 视频 + 插入的视频）", kinds.count("video") == 4, kinds)
 
-# ---------------------------------------------------------------- 1. 反复渲染
+# ---------------------------------------------------------------- 1. repeated renders
 print("\n== 1. 同一项目连续渲染 6 次：结果一致、不留垃圾、资源不涨 ==")
 r = wait_job(render(A))
 check("第 1 次（预热）", r["status"] == "done", r.get("error"))
@@ -206,7 +206,7 @@ print(f"     5 次后：内存 {after['mem_mb']} MB，句柄 {after['handles']}�
 check("句柄 / 线程没有随渲染次数增长", after["handles"] - base["handles"] < 150 and after["threads"] - base["threads"] < 10,
       f"句柄 {base['handles']}→{after['handles']}，线程 {base['threads']}→{after['threads']}")
 
-# ---------------------------------------------------------------- 2. 并发
+# ---------------------------------------------------------------- 2. concurrency
 print("\n== 2. 三个项目同时渲染 + 防连点 ==")
 j1, j2, j3 = render(A), render(BV), render(E)
 dup = render(A)
@@ -217,7 +217,7 @@ dv = duration(out_file(BV))
 tot = sum(s["duration"] for s in proj(BV)["steps"] if s["include"])
 check("带视频的项目时长正常", tot < dv < tot + 7, f"{dv:.1f}s vs 步骤 {tot:.1f}s")
 
-# ---------------------------------------------------------------- 3. 渲染时的其他操作
+# ---------------------------------------------------------------- 3. other actions while rendering
 print("\n== 3. 渲染进行中：冲突操作被拒绝，文字修改不丢 ==")
 vstep = next(s for s in proj(BV)["steps"] if s["kind"] == "video")
 jb = render(BV, 1280, 720, 25)
@@ -236,7 +236,7 @@ check("渲染期间改的文字没被渲染结果覆盖", p_after["steps"][0]["t
       and p_after["steps"][0]["note"] == "备注X" and p_after["subtitle"] == "渲染时改的副标题",
       (p_after["steps"][0]["title"], p_after["subtitle"]))
 
-# ---------------------------------------------------------------- 4. 中途停止
+# ---------------------------------------------------------------- 4. stopping halfway
 print("\n== 4. 中途停止 3 次：很快停下、旧成片不被破坏、不留进程 ==")
 of = out_file(A)
 st0 = (of.stat().st_size, of.stat().st_mtime)
@@ -258,7 +258,7 @@ check("旧成片没被半截文件覆盖", (of.stat().st_size, of.stat().st_mtim
 check("没有残留的 ffmpeg 进程", not ffmpeg_left(), ffmpeg_left()[:1])
 check("停止后能正常再渲染", wait_job(render(A))["status"] == "done")
 
-# ---------------------------------------------------------------- 5. 并发保存
+# ---------------------------------------------------------------- 5. concurrent saves
 print("\n== 5. 并发保存 120 次（12 个线程）：一个都不丢，project.json 完好 ==")
 steps_e = proj(E)["steps"]
 
@@ -275,7 +275,7 @@ with ThreadPoolExecutor(12) as ex:
     res = list(ex.map(edit, range(120)))
 check("120 次请求全部成功", all(r[0] == 200 for r in res), {r[0] for r in res})
 final = {s["id"]: s for s in proj(E)["steps"]}
-# 每个 (步骤, 字段) 最后一次写入的值应该在
+# the last value written for every (step, field) must be there
 last = {}
 for code, sid, field, val in res:
     last[(sid, field)] = val
@@ -285,7 +285,7 @@ raw = (PROJ / E / "project.json").read_text(encoding="utf-8")
 check("project.json 是完整合法的 JSON", bool(json.loads(raw)["steps"]))
 check("没有留下写到一半的临时文件", not list((PROJ / E).glob("*.tmp")))
 
-# ---------------------------------------------------------------- 6. 文件缺失
+# ---------------------------------------------------------------- 6. missing files
 print("\n== 6. 文件缺失 / 损坏：照样出片 ==")
 pd = storage.load(D)
 (storage.screenshots_dir(D) / pd.steps[0].screenshot).unlink()
@@ -312,7 +312,7 @@ check("不存在的项目：404", nf.status_code == 404, nf.status_code)
 tr = requests.get(f"{B}/api/projects/{A}/file/screenshots/..%5C..%5Cconfig.json")
 check("路径穿越读文件：被拒绝", tr.status_code == 404, tr.status_code)
 
-# ---------------------------------------------------------------- 7. 资源
+# ---------------------------------------------------------------- 7. resources
 print("\n== 7. 所有测试之后的资源占用 ==")
 time.sleep(2)
 end = server_stats()
@@ -320,7 +320,7 @@ print(f"     内存 {base['mem_mb']}→{end['mem_mb']} MB，句柄 {base['handle
 check("线程数回落（后台任务线程都结束了）", end["threads"] - base["threads"] < 10, f"{base['threads']}→{end['threads']}")
 check("没有残留的 ffmpeg 进程", not ffmpeg_left())
 
-# ---------------------------------------------------------------- 8. 重启
+# ---------------------------------------------------------------- 8. restart
 print("\n== 8. 重启服务：设置和项目都在 ==")
 requests.post(f"{B}/api/settings", json={"language": "en-US", "voice": "en-US-AriaNeural", "ui_language": "de"}, headers=H)
 n_before = len(requests.get(f"{B}/api/projects").json()["projects"])

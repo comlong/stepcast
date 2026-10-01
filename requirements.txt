@@ -1,31 +1,31 @@
-# Web 服务
+# Web service
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
 pydantic>=2.6
 
-# LLM / 网络
-requests>=2.31          # DeepSeek / OpenAI / Mistral / Gemini / Azure / Ollama（OpenAI 兼容协议）
+# LLM / networking
+requests>=2.31          # DeepSeek / OpenAI / Mistral / Gemini / Azure / Ollama (OpenAI-compatible protocol)
 anthropic>=1.6,<2       # Claude
 
-# 语音合成（微软 Edge 神经网络语音，免费）
+# Speech synthesis (Microsoft Edge neural voices, free)
 edge-tts>=6.1.9
-# 离线兜底（Windows SAPI5）
+# offline fallback (Windows SAPI5)
 pyttsx3>=2.90
 
-# 图像合成
+# Image composition
 Pillow>=10.2
-fonttools>=4.40        # 看字体里有哪些字：阿拉伯文、韩文、印地文等自动换用有这些字的字体
-arabic-reshaper>=3.0   # 阿拉伯 / 波斯文连写（非 Windows 时用；Windows 上用系统自带的排版引擎）
-python-bidi>=0.5       # 从右往左排版（同上）
+fonttools>=4.40        # which characters a font has: Arabic, Korean, Hindi etc. switch to a font that has them
+arabic-reshaper>=3.0   # Arabic / Persian joining (outside Windows; Windows uses its built-in text engine)
+python-bidi>=0.5       # right-to-left layout (same as above)
 
-# 语音识别（本地，首次使用自动下载模型）
+# Speech recognition (local; the model is downloaded on first use)
 faster-whisper>=1.0
 
-# PPT / PDF 导入
+# PPT / PDF import
 python-pptx>=1.0
 pymupdf>=1.24
-pywin32>=306; sys_platform == "win32"   # 调用本机 PowerPoint 导出幻灯片
+pywin32>=306; sys_platform == "win32"   # export slides with the local PowerPoint
 
-# ffmpeg 兜底（系统未安装 ffmpeg 时自动下载使用）
+# ffmpeg fallback (used automatically when ffmpeg isn't installed on the system)
 imageio-ffmpeg>=0.4.9

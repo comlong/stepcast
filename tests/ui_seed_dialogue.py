@@ -1,11 +1,11 @@
-"""给 UI 测试服务造一个两人问答的 PPT 项目（只写 ui_data）。"""
+"""Create a two-person Q&A slide project for the UI test server (writes ui_data only)."""
 import os
 import sys
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-SP = Path(__file__).parent / "_work"   # 数据放在 tests/_work/ui_data（不提交）
+SP = Path(__file__).parent / "_work"   # data lives in tests/_work/ui_data (not committed)
 os.environ["VT_DATA_DIR"] = str(SP / "ui_data")
 os.environ["VT_DISABLE_POWERPOINT"] = "1"
 ROOT = Path(__file__).resolve().parents[1]

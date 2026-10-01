@@ -1,4 +1,4 @@
-"""字幕生成：SRT（外挂）+ ASS（烧录进画面）。"""
+"""Subtitle generation: SRT (external) + ASS (burned into the frames)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -17,7 +17,7 @@ class Cue:
 
 @dataclass
 class Segment:
-    """一段语音在时间轴上的位置。"""
+    """Position of a piece of speech on the timeline."""
     start: float
     duration: float
     text: str
@@ -30,14 +30,14 @@ def _is_cjk(text: str) -> bool:
 
 
 def _char_time_map(boundaries: Sequence[Dict[str, float]]) -> List[tuple[int, float]]:
-    """把词边界转成 (累计字符数, 时间) 的映射表：第 0 个字对应第一个词开始说的时间
-    （视频里的讲话往往过几秒才开口，字幕不该提前出来），之后每个词对应它说完的时间。"""
+    """Turn word boundaries into a (cumulative character count, time) table: character 0 maps to the time the first word starts
+    (speech in a video often starts a few seconds in, and the subtitle shouldn't appear early); each further word maps to the time it ends."""
     out: List[tuple[int, float]] = [(0, float(boundaries[0].get("t", 0.0)) if boundaries else 0.0)]
     acc = 0
     for b in boundaries:
         t = float(b.get("t", 0.0))
         if acc > 0 and t > out[-1][1] + 0.05:
-            out.append((acc, t))          # 前面有停顿（换句、换人）：同一个位置再记一个「开口」的时间
+            out.append((acc, t))          # a pause before it (new sentence, new speaker): record a second, "starts speaking" time at the same position
         acc += len(b.get("text", "") or "")
         out.append((acc, t + float(b.get("d", 0.0))))
     return out
@@ -45,8 +45,8 @@ def _char_time_map(boundaries: Sequence[Dict[str, float]]) -> List[tuple[int, fl
 
 def _time_at_char(cmap: List[tuple[int, float]], char_pos: int, total_chars: int,
                   duration: float, start: bool = False) -> float:
-    """第 char_pos 个字的时间。start=True 用来算一行字幕从哪开始：正好落在停顿处时取停顿后开口的时间，
-    不然字幕会在上一句刚说完、下一句还没开口时就提前出来。"""
+    """Time of character char_pos. start=True is for the start of a subtitle line: if it falls exactly on a pause, use the time speech resumes,
+    otherwise the subtitle would appear early, right after the previous sentence ends but before the next one starts."""
     if not cmap or len(cmap) < 2 or cmap[-1][0] <= 0:
         return duration * (char_pos / max(1, total_chars))
     scale = cmap[-1][0] / max(1, total_chars)
@@ -85,9 +85,9 @@ def segment_to_cues(seg: Segment, max_chars: Optional[int] = None) -> List[Cue]:
         t1 = _time_at_char(cmap, pos, total, seg.duration)
         if t1 <= t0:
             t1 = t0 + max(0.6, seg.duration / len(lines))
-        # 截取范围以外的讲话时间是负的 / 超出这一段：夹到这一段以内，完全在外面的会被下面滤掉
+        # speech outside the trimmed range has negative times / times beyond this segment: clamp into the segment; cues completely outside are filtered below
         cues.append(Cue(seg.start + max(0.0, t0), seg.start + min(t1, seg.duration), line))
-    # 修掉重叠
+    # fix overlaps
     for i in range(len(cues) - 1):
         if cues[i].end > cues[i + 1].start:
             cues[i].end = cues[i + 1].start
@@ -127,7 +127,7 @@ def write_srt(cues: Sequence[Cue], path: Path) -> Path:
     return path
 
 
-# ---- ASS（烧录用，可控制样式） --------------------------------------------
+# ---- ASS (for burning in, with styling) --------------------------------------------
 
 def _ass_time(t: float) -> str:
     if t < 0:

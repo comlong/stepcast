@@ -1,8 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller 打包配置。不要直接运行，用：build_exe.bat（或 python packaging/build_exe.py）
+# PyInstaller configuration. Don't run it directly; use build_exe.bat (or python packaging/build_exe.py)
 #
-# 打出来的是一个文件夹（onedir）：StepCast.exe + _internal（所有库）。
-# 不用单文件 exe：这个项目的依赖有几百 MB，单文件每次启动都要先解压到临时目录，慢且容易被杀毒软件误报。
+# The result is a folder (onedir): StepCast.exe + _internal (all libraries).
+# Not a single-file exe: the dependencies are several hundred MB, and a single file would unpack itself to a temp folder on every start — slow and prone to antivirus false positives.
 import os
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
@@ -18,16 +18,16 @@ hiddenimports += [
     "python_multipart", "multipart",
     "win32com.client", "pythoncom", "pywintypes",
     "pyttsx3.drivers", "pyttsx3.drivers.sapi5",
-    "arabic_reshaper", "bidi",                        # 阿拉伯 / 希伯来文排版（非 Windows 兜底）
+    "arabic_reshaper", "bidi",                        # Arabic / Hebrew layout (fallback outside Windows)
 ]
-# fontTools 读字体表时按表名动态导入模块（_c_m_a_p、_n_a_m_e、O_S_2f_2……），静态分析找不到
+# fontTools imports modules dynamically by table name when reading fonts (_c_m_a_p, _n_a_m_e, O_S_2f_2 …); static analysis can't find them
 hiddenimports += collect_submodules("fontTools.ttLib.tables")
 
-# 这些包带数据文件 / DLL / 运行时才导入的子模块，整包收进来
+# these packages ship data files / DLLs / submodules imported at run time; collect them completely
 for pkg in (
-    "faster_whisper", "ctranslate2", "av", "onnxruntime", "tokenizers", "huggingface_hub",  # 语音识别
-    "imageio_ffmpeg",                                                                      # 自带 ffmpeg
-    "edge_tts", "certifi", "pyttsx3", "comtypes",                                          # 配音
+    "faster_whisper", "ctranslate2", "av", "onnxruntime", "tokenizers", "huggingface_hub",  # speech recognition
+    "imageio_ffmpeg",                                                                      # bundled ffmpeg
+    "edge_tts", "certifi", "pyttsx3", "comtypes",                                          # voice-over
     "pptx", "pymupdf",                                                                     # PPT / PDF
     "anthropic",                                                                           # Claude
 ):
@@ -54,7 +54,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="StepCast",
-    console=True,              # 保留命令行窗口：能看到地址和报错，关掉窗口就停止服务
+    console=True,              # keep the console window: shows the address and errors; closing it stops the service
     icon=os.path.join(SPECPATH, "icon.ico"),
     upx=False,
 )

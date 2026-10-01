@@ -1,4 +1,4 @@
-"""备注原文模式：备注和解说是同一种语言才照念，不同就交给 AI 用解说语言写；换行按备注本身的文字拼；语言判断。"""
+"""Notes-as-narration mode: notes are read as they are only if they're in the narration language, otherwise the AI writes them in the narration language; line breaks joined by the notes' own script; language detection."""
 import os
 import shutil
 import sys
@@ -67,7 +67,7 @@ st = proj.steps
 check("英文备注那页由 AI 用中文写", st[0].narration == "AI 用中文写的第 0 页。" and "This slide opens" in Rec.calls[0], st[0].narration)
 import json as _json  # noqa: E402
 prompt0 = Rec.calls[0]
-sent = _json.JSONDecoder().raw_decode(prompt0[prompt0.index(chr(10) + "["):].strip())[0]   # 提示词里的页面列表
+sent = _json.JSONDecoder().raw_decode(prompt0[prompt0.index(chr(10) + "["):].strip())[0]   # the slide list inside the prompt
 check("这页标了「备注就是讲稿」：AI 照着备注完整地讲，不改写、不压缩",
       [x.get("notes_are_script") for x in sent] == [True, None], [(x["i"], x.get("notes_are_script")) for x in sent])
 check("中文备注那页照念", st[1].narration == "这一页讲外观设计，重点是前脸和大灯。")

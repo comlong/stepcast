@@ -1,4 +1,4 @@
-"""停止按钮：一键生成三个阶段分别中途停止。"""
+"""The Stop button: stopping each of the three stages of "Generate all" halfway."""
 import os
 import shutil
 import subprocess
@@ -21,7 +21,7 @@ from backend import config, main, storage  # noqa: E402
 from backend.services import llm_openai, tts  # noqa: E402
 import selftest  # noqa: E402
 from backend import config as _cfg  # noqa: E402
-# 不读你真实的 config.json（里面的默认音色可能不是中文，念不了测试里的中文解说）
+# don't read your real config.json (its default voice may not be Chinese and couldn't read the Chinese narration in this test)
 _cfg.CONFIG_PATH = DATA / 'config.json'
 _cfg.CONFIG_PATH.write_text('{"ui_language": "zh", "language": "zh-CN", "voice": "zh-CN-XiaoxiaoNeural"}', encoding='utf-8')
 _cfg._cache = None
@@ -68,7 +68,7 @@ def ffmpeg_count():
     return out.lower().count("ffmpeg.exe")
 
 
-# ---------------------------------------------------------------- 1. 生成解说阶段
+# ---------------------------------------------------------------- 1. writing narration
 print("\n== 1. 停在「生成解说」（DeepSeek 请求进行中）==")
 if not config.get("deepseek_api_key"):
     os.environ["DEEPSEEK_API_KEY"] = "sk-test-not-used"
@@ -78,7 +78,7 @@ calls = []
 
 def hanging_post(*a, **k):
     calls.append(time.time())
-    time.sleep(30)          # 模拟一个很慢的生成请求
+    time.sleep(30)          # simulate a very slow generation request
     raise RuntimeError("不应该等到这里")
 llm_openai.requests.post = hanging_post
 
@@ -103,7 +103,7 @@ check("不用等 DeepSeek 返回，1.5 秒内停下", secs < 1.5, f"{secs:.2f} �
 check("解说没被写入半截内容", all(not s.narration for s in p.steps))
 check("没有出片", not p.output)
 
-# ---------------------------------------------------------------- 2. 配音阶段
+# ---------------------------------------------------------------- 2. voice-over
 print("\n== 2. 停在「合成语音」==")
 
 
@@ -113,7 +113,7 @@ def must_not_call(*a, **k):
 llm_openai.requests.post = must_not_call
 calls.clear()
 
-pid = selftest.build_project("停止测试-配音")          # 自带标题和每步解说
+pid = selftest.build_project("停止测试-配音")          # comes with a title and narration for every step
 real_synth = tts.synth
 
 
@@ -149,7 +149,7 @@ check("改过的那步用新文字重新配音", p.steps[0].audio and p.steps[0]
 check("之前配好的步骤没有重做", not kept_before or p.steps[1].audio == kept_before)
 check("仍然没有调用 DeepSeek", not calls, calls)
 
-# ---------------------------------------------------------------- 4. 渲染阶段
+# ---------------------------------------------------------------- 4. rendering
 print("\n== 4. 停在「渲染视频」==")
 old_output = p.output
 old_mtime = (storage.output_dir(pid) / old_output).stat().st_mtime
@@ -173,7 +173,7 @@ check("停止后能立刻重新开始渲染（没有卡在「正在渲染」）"
 jj = wait_done(r.json()["id"], timeout=300)
 check("重新渲染成功", jj["status"] == "done", jj.get("error", ""))
 
-# ---------------------------------------------------------------- 5. 边角
+# ---------------------------------------------------------------- 5. edge cases
 print("\n== 5. 边角情况 ==")
 check("停止不存在的任务 -> 404", c.post("/api/jobs/j_nope/cancel").status_code == 404)
 done = c.post(f"/api/jobs/{jj['id']}/cancel").json()

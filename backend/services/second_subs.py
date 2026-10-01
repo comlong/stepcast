@@ -1,9 +1,9 @@
-"""第二语言字幕：主字幕烧进视频，第二语言做成外挂字幕文件（WebVTT / SRT），看视频的人自己选一种（默认不显示）。
+"""Second-language subtitles: the main subtitle is burned into the video, the second language is an external subtitle file (WebVTT / SRT) the viewer picks (off by default).
 
-- 渲染视频时把主字幕的时间轴存成「视频名.cues.json」，和视频放在一起（没有这个文件的老视频就读 .srt）
-- 生成第二语言：主字幕按句子合并（主字幕一条常常只是半句），AI 整句翻译，每句用这句话在视频里的时间；
-  译文太长的拆成两条
-- 文件：「视频名.语言.vtt / .srt」；还可以导出网页播放包：视频 + 字幕 + 一个播放页（选第二字幕、全屏都能用）
+- When rendering, the main subtitle timeline is saved as "<video>.cues.json" next to the video (older videos without it read the .srt)
+- Generating a second language: main subtitle cues are merged into sentences (one cue is often half a sentence), the AI translates whole sentences, each keeping its time in the video;
+  translations that are too long are split into two cues
+- Files: "<video>.<lang>.vtt / .srt"; a web player package can also be exported: video + subtitles + a player page (subtitle choice and full screen work)
 """
 from __future__ import annotations
 
@@ -27,20 +27,20 @@ from .llm import ChatClient, LLMError, get_client
 Progress = Optional[Callable[[float, str], None]]
 
 CUES_SUFFIX = ".cues.json"
-BATCH = 50                     # 一次翻译多少句
+BATCH = 50                     # sentences per translation request
 _END = re.compile(r"(?:[。！？!?；;…]|(?<![0-9])\.)[\"'”’」』）)]*$")
 _CJK = re.compile(r"[぀-ヿ㐀-鿿가-힯]")  # i18n: ignore
 
 
-# ---- 主字幕 ---------------------------------------------------------------------
+# ---- main subtitle ---------------------------------------------------------------------
 
-LEGACY_BOTTOM = 0.945          # 1.6.0 以前渲染的视频，主字幕底边在画面高度的 94.5%
+LEGACY_BOTTOM = 0.945          # videos rendered before 1.6.0 have the main subtitle's bottom edge at 94.5% of the frame height
 
 
 def save_primary(out_dir: Path, video_name: str, cues: List[Any], language: str, burned: bool, space: bool,
                  bottom: float = 0.935) -> Path:
-    """渲染时调用：记下主字幕的时间轴和位置（底边在画面高度的多少处），以后生成第二语言字幕就不用重新渲染，
-    播放页也能把第二字幕紧贴着放在主字幕下面。"""
+    """Called when rendering: store the main subtitle timeline and position (bottom edge as a fraction of the frame height), so second-language subtitles
+    can be generated later without re-rendering and the player page can place the second subtitle right below the main one."""
     path = out_dir / (Path(video_name).stem + CUES_SUFFIX)
     data = {"version": 2, "video": video_name, "language": language, "burned": burned, "space": space,
             "bottom": round(bottom, 4),
@@ -70,7 +70,7 @@ def _parse_srt(text: str) -> List[List[Any]]:
 
 
 def load_primary(proj: Project) -> Optional[Dict[str, Any]]:
-    """当前成片的主字幕。老版本渲染的视频没有 .cues.json：读 .srt，并标记「没给第二字幕留位置」。"""
+    """Main subtitles of the current video. Videos rendered by old versions have no .cues.json: read the .srt and mark "no room for a second subtitle"."""
     if not proj.output:
         return None
     out_dir = storage.output_dir(proj.id)
@@ -81,7 +81,7 @@ def load_primary(proj: Project) -> Optional[Dict[str, Any]]:
             d = json.loads(p.read_text(encoding="utf-8"))
             if isinstance(d, dict) and isinstance(d.get("cues"), list):
                 d["legacy"] = False
-                d.setdefault("bottom", 0.905 if d.get("space") else LEGACY_BOTTOM)     # 1.6.0 渲染的
+                d.setdefault("bottom", 0.905 if d.get("space") else LEGACY_BOTTOM)     # rendered by 1.6.0
                 return d
         except (OSError, ValueError):
             pass
@@ -94,7 +94,7 @@ def load_primary(proj: Project) -> Optional[Dict[str, Any]]:
 
 
 def primary_key(primary: Dict[str, Any]) -> str:
-    """主字幕的指纹：视频重新渲染过（时间轴变了），之前生成的第二语言字幕就过期了。"""
+    """Fingerprint of the main subtitles: after re-rendering (timeline changed) previously generated second-language subtitles are outdated."""
     return hashlib.sha1(json.dumps(primary.get("cues") or [], ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
 
 
@@ -105,7 +105,7 @@ def _join(a: str, b: str) -> str:
 
 
 def group_sentences(cues: List[List[Any]]) -> List[Dict[str, Any]]:
-    """主字幕合并成整句：到句末标点为止；中间停顿超过 0.7 秒、一句超过 14 秒或太长也断开。"""
+    """Merge main subtitle cues into sentences: up to the sentence-ending punctuation; also break on pauses over 0.7 s, sentences over 14 s or too long."""
     out: List[Dict[str, Any]] = []
     cur: Optional[Dict[str, Any]] = None
     for s, e, t in cues:
@@ -118,7 +118,7 @@ def group_sentences(cues: List[List[Any]]) -> List[Dict[str, Any]]:
         if cur is None:
             cur = {"s": float(s), "e": float(e), "t": t, "cuts": []}
         else:
-            cur["cuts"].append(float(s))                 # 句子中间主字幕换条的时刻
+            cur["cuts"].append(float(s))                 # moment within the sentence where the main subtitle switches cue
             cur["e"] = float(e)
             cur["t"] = _join(cur["t"], t)
         if _END.search(t):
@@ -126,7 +126,7 @@ def group_sentences(cues: List[List[Any]]) -> List[Dict[str, Any]]:
             cur = None
     if cur:
         out.append(cur)
-    # 很短的句子（「三块。」「对。」这种，一秒多就过去了）并进下一句，免得第二字幕一闪而过
+    # very short sentences ("Right." — gone after a second) are merged into the next one so the second subtitle doesn't just flash
     merged: List[Dict[str, Any]] = []
     for x in out:
         prev = merged[-1] if merged else None
@@ -139,7 +139,7 @@ def group_sentences(cues: List[List[Any]]) -> List[Dict[str, Any]]:
     return merged
 
 
-# ---- 翻译 -----------------------------------------------------------------------
+# ---- translation -----------------------------------------------------------------------
 
 SUB_SYSTEM = """你是专业的视频字幕译员，把教学视频的字幕逐句翻译成目标语言，做成第二语言字幕。
 规则：
@@ -175,14 +175,14 @@ def _translate(client: ChatClient, sents: List[str], src: str, target: str, prog
 
     run(list(range(len(sents))))
     missing = [k for k, t in enumerate(out) if t is None]
-    if missing:                                   # 漏掉的再问一次
+    if missing:                                   # ask once more for the missing ones
         run(missing)
     return [t if t is not None else sents[k] for k, t in enumerate(out)]
 
 
 def _split(text: str, s: float, e: float, max_chars: int, cuts: Optional[List[float]] = None) -> List[List[Any]]:
-    """译文太长就拆成几条，按字数分时间；分界时刻附近（1.5 秒内）主字幕正好换条的话，就在那一刻换，
-    两种字幕一起切换。断句优先在标点处，其次在空格处。"""
+    """Split translations that are too long into several cues, timed by length; if the main subtitle switches cue within 1.5 s of a split point,
+    switch at that moment so both subtitles change together. Break at punctuation first, then at spaces."""
     if len(text) <= max_chars:
         return [[s, e, text]]
     n = math.ceil(len(text) / max_chars)
@@ -200,7 +200,7 @@ def _split(text: str, s: float, e: float, max_chars: int, cuts: Optional[List[fl
         if cut <= 0:
             cut = target
         while 0 < cut < len(rest) and unicodedata.category(rest[cut])[0] == "M":
-            cut += 1                                   # 附加符号（泰文声调、印地文元音符号）跟着前面的字走
+            cut += 1                                   # combining marks (Thai tone marks, Hindi vowel signs) stay with the preceding letter
         parts.append(rest[:cut].strip())
         rest = rest[cut:].strip()
     parts.append(rest)
@@ -221,7 +221,7 @@ def _split(text: str, s: float, e: float, max_chars: int, cuts: Optional[List[fl
 
 
 def _fmt(t: float, sep: str) -> str:
-    """秒 → 00:01:02,345。先整体换成毫秒再拆，3.9996 秒是 00:00:04,000（以前会写成 00:00:03,000）。"""
+    """Seconds → 00:01:02,345. Convert to milliseconds first, then split: 3.9996 s is 00:00:04,000 (it used to become 00:00:03,000)."""
     ms = int(round(max(0.0, t) * 1000))
     h, ms = divmod(ms, 3_600_000)
     m, ms = divmod(ms, 60_000)
@@ -229,19 +229,19 @@ def _fmt(t: float, sep: str) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
 
 
-UPRIGHT = ("ar",)          # 阿拉伯文从右往左写，往右斜反而别扭，不用斜体；其他语言（包括中文）都斜体
-# 本地播放器（Windows Media Player 等）显示外挂字幕比画面慢半拍：SRT（本地播放器用）整条时间轴提前这么多秒；
-# VTT 和网页播放包给网页播放器用，时间本来就准，不提前
+UPRIGHT = ("ar",)          # Arabic is written right to left, slanting it to the right looks wrong, so no italics; all other languages (including Chinese) are italic
+# Desktop players (Windows Media Player etc.) show external subtitles slightly late: the SRT (for desktop players) timeline is shifted this many seconds earlier;
+# VTT and the web player package are for web players, which are accurate, so they aren't shifted
 SRT_LEAD = 0.25
 
 
 def italic(lang: str) -> bool:
-    """第二字幕默认斜体，和主字幕一眼分开。"""
+    """Second subtitles are italic by default so they are easy to tell apart from the main subtitle."""
     return (lang or "").split("-")[0].lower() not in UPRIGHT
 
 
 def write_vtt(cues: List[List[Any]], path: Path, lang: str = "") -> None:
-    """WebVTT：放在画面最底下一行（主字幕上面已经让出了位置），字号小一些，默认斜体。"""
+    """WebVTT: on the very bottom line (the main subtitle has already moved up to make room), slightly smaller, italic by default."""
     rows = ["WEBVTT", "", "STYLE", "::cue {", "  font-size: 75%;", "  background-color: rgba(8, 10, 14, 0.72);", "}", ""]
     for k, (s, e, t) in enumerate(cues, 1):
         t = str(t).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -251,7 +251,7 @@ def write_vtt(cues: List[List[Any]], path: Path, lang: str = "") -> None:
 
 
 def write_srt(cues: List[List[Any]], path: Path, lang: str = "") -> None:
-    """SRT：给本地播放器用，整条提前 SRT_LEAD 秒（整体平移，前后两条不会叠在一起）。"""
+    """SRT: for desktop players, shifted SRT_LEAD seconds earlier as a whole (shifting everything keeps consecutive cues from overlapping)."""
     rows = []
     for k, (s, e, t) in enumerate(cues, 1):
         s, e = max(0.0, s - SRT_LEAD), max(0.1, e - SRT_LEAD)
@@ -266,12 +266,12 @@ def track_files(video: str, lang: str) -> Dict[str, str]:
 
 def generate(proj: Project, languages: List[str], progress: Progress = None,
              client: Optional[ChatClient] = None) -> List[SubtitleTrack]:
-    """给当前成片生成第二语言字幕。返回生成好的字幕轨（调用方写回项目）。"""
+    """Generate second-language subtitles for the current video. Returns the generated tracks (the caller writes them into the project)."""
     from .script_gen import lang_name
     primary = load_primary(proj)
     if not primary or not primary.get("cues"):
         raise LLMError(i18n.t("还没有渲染好的视频（或者视频没有字幕），先点「③ 渲染视频」。"))
-    langs = [x for x in dict.fromkeys(languages) if x and x != proj.language]    # 简体视频配繁体第二字幕是可以的
+    langs = [x for x in dict.fromkeys(languages) if x and x != proj.language]    # a Simplified Chinese video may have Traditional Chinese second subtitles
     if not langs:
         raise LLMError(i18n.t("选一种和视频不同的语言"))
     client = client or get_client()
@@ -304,14 +304,14 @@ def generate(proj: Project, languages: List[str], progress: Progress = None,
 
 
 def merge_tracks(proj: Project, new: List[SubtitleTrack]) -> None:
-    """新生成的字幕轨替换同语言的旧的。"""
+    """Newly generated tracks replace older tracks of the same language."""
     langs = {t.lang for t in new}
     proj.subtitle_tracks = [t for t in proj.subtitle_tracks if t.lang not in langs] + new
     proj.subtitle_tracks.sort(key=lambda t: t.lang)
 
 
 def state(proj: Project) -> Dict[str, Any]:
-    """编辑器用：主字幕的情况 + 每种第二语言字幕（和当前视频对不上的标成过期）。"""
+    """For the editor: main subtitle status + every second-language subtitle (those not matching the current video are marked outdated)."""
     primary = load_primary(proj)
     key = primary_key(primary) if primary else ""
     out_dir = storage.output_dir(proj.id)
@@ -347,7 +347,7 @@ def delete_track(proj: Project, lang: str) -> None:
     proj.subtitle_tracks = [x for x in proj.subtitle_tracks if x.lang != lang]
 
 
-# ---- 网页播放包 ---------------------------------------------------------------------
+# ---- web player package ---------------------------------------------------------------------
 
 PLAYER_HTML = """<!doctype html>
 <html lang="{lang}">
@@ -388,9 +388,9 @@ PLAYER_HTML = """<!doctype html>
 </div>
 <script>
 const TRACKS = {tracks};
-const BOTTOM = {bottom};    // 主字幕底边在画面高度的多少处（渲染时记下的）
-const GAP = 0;              // 第二字幕的底框紧挨着主字幕的底框
-const UPRIGHT = ['ar'];     // 阿拉伯文不用斜体（从右往左写，往右斜别扭）
+const BOTTOM = {bottom};    // bottom edge of the main subtitle as a fraction of the frame height (recorded at render time)
+const GAP = 0;              // the second subtitle's box sits directly below the main subtitle's box
+const UPRIGHT = ['ar'];     // no italics for Arabic (written right to left, slanting it to the right looks wrong)
 const v = document.getElementById('v'), stage = document.getElementById('stage');
 const sub = document.getElementById('sub'), subText = document.getElementById('subText');
 const sel = document.getElementById('lang');
@@ -401,8 +401,8 @@ function contentRect() {{
   return {{ top: v.offsetTop + (H - h) / 2, height: h }};
 }}
 function layout() {{
-  // 第二字幕紧贴在主字幕下面（渲染时主字幕下面已经留出了一行的位置），字号约为画面高度的 2.8%；
-  // 偶尔两行放不下，就往上挪一点，不超出画面
+  // the second subtitle sits right below the main one (rendering left one line of room under it); font size about 2.8% of the frame height;
+  // if two lines occasionally don't fit, move it up a little so it stays inside the frame
   const r = contentRect();
   sub.style.fontSize = Math.max(11, r.height * 0.028) + 'px';
   const top = r.top + r.height * (BOTTOM + GAP);
@@ -420,8 +420,8 @@ function show() {{
 }}
 function loop() {{ show(); if (!v.paused) requestAnimationFrame(loop); }}
 
-// 用浏览器自己的全屏（播放器右下角的全屏按钮、双击画面、手机）时，页面上的字幕层显示不出来：
-// 这时把第二字幕交给浏览器自己显示（同样放在主字幕下面）
+// in the browser's own full screen (the player's full-screen button, double-click, phones) the page's subtitle layer can't be shown:
+// hand the second subtitle to the browser to display instead (also right below the main subtitle)
 let track = null;
 const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement || null;
 const nativeFs = () => fsEl() === v || !!v.webkitDisplayingFullscreen;
@@ -458,15 +458,15 @@ for (const ev of ['fullscreenchange', 'webkitfullscreenchange']) document.addEve
 v.addEventListener('webkitbeginfullscreen', syncTrack);
 v.addEventListener('webkitendfullscreen', syncTrack);
 
-// ⛶：整块（视频 + 第二字幕层）全屏，字幕位置最准。浏览器不让时（比如嵌在没写 allow="fullscreen" 的 iframe 里）
-// 退一步用视频自己的全屏；还不行就在新窗口打开这个页面（接着当前进度和字幕）
+// ⛶: full screen for the whole stage (video + second-subtitle layer), the most accurate subtitle position. If the browser refuses (e.g. in an iframe without allow="fullscreen")
+// fall back to the video's own full screen; failing that, open this page in a new window (continuing at the current time and subtitle)
 function openHere() {{
   const q = new URLSearchParams(location.search);
   if (sel.value) q.set('sub', sel.value); else q.delete('sub');
   q.set('t', v.currentTime.toFixed(1));
   window.open(location.pathname + '?' + q.toString(), '_blank');
 }}
-// 请求全屏：成功、失败都有交代。有的内嵌浏览器既不答应也不拒绝，1.5 秒还没全屏就当失败
+// request full screen with a clear outcome either way. Some embedded browsers neither grant nor refuse; not in full screen after 1.5 s counts as refused
 function reqFs(el) {{
   const f = el.requestFullscreen || el.webkitRequestFullscreen;
   if (!f || !(document.fullscreenEnabled || document.webkitFullscreenEnabled)) return Promise.reject(new Error('no'));
@@ -477,7 +477,7 @@ function reqFs(el) {{
 }}
 function enterFs() {{
   if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled) && v.webkitEnterFullscreen) {{
-    v.webkitEnterFullscreen();                          // iPhone：只能视频自己全屏
+    v.webkitEnterFullscreen();                          // iPhone: only the video itself can go full screen
     return;
   }}
   reqFs(stage).catch(() => reqFs(v)).catch(openHere);
@@ -486,22 +486,22 @@ document.getElementById('fs').onclick = () => {{
   if (fsEl()) (document.exitFullscreen || document.webkitExitFullscreen).call(document); else enterFs();
 }};
 const q = new URLSearchParams(location.search);
-const want = q.get('sub');           // 链接里带 ?sub=en-US 可以直接打开这种第二字幕
+const want = q.get('sub');           // ?sub=en-US in the link opens that second subtitle directly
 if (want && TRACKS[want]) {{ sel.value = want; sel.onchange(); }}
 const t0 = parseFloat(q.get('t') || '');
 if (t0 > 0) {{
-  if (v.readyState >= 1) v.currentTime = t0;                       // 元数据已经到了（比如有缓存）
+  if (v.readyState >= 1) v.currentTime = t0;                       // metadata already loaded (e.g. from cache)
   else v.addEventListener('loadedmetadata', () => {{ v.currentTime = t0; }}, {{ once: true }});
 }}
 layout();
 </script>
 </body>
 </html>
-"""  # i18n: ignore（播放页给看视频的人用，中文只在注释里）
+"""  # i18n: ignore
 
 
 def player_html(proj: Project, video_src: str, tracks: List[SubtitleTrack]) -> str:
-    """独立的播放页：内嵌各语言字幕的时间轴（不用额外加载文件，直接双击打开也能用）。"""
+    """Standalone player page: the subtitle timelines of all languages are embedded (no extra files to load; it even works when opened from disk)."""
     data = {t.lang: {"name": t.name, "cues": track_cues(proj, t.lang)} for t in tracks}
     options = "".join(f'<option value="{html.escape(t.lang)}">{html.escape(t.name)}</option>' for t in tracks)
     return PLAYER_HTML.format(
@@ -512,7 +512,7 @@ def player_html(proj: Project, video_src: str, tracks: List[SubtitleTrack]) -> s
 
 
 def export_package(proj: Project) -> Path:
-    """网页播放包（zip）：视频、各语言的第二字幕（VTT + SRT）、播放页 index.html。放到任何网站目录里就能用。"""
+    """Web player package (zip): video, second-language subtitles (VTT + SRT), player page index.html. Works in any folder of a website."""
     st = state(proj)
     tracks = [t for t in proj.subtitle_tracks if not next(x for x in st["tracks"] if x["lang"] == t.lang)["stale"]]
     out_dir = storage.output_dir(proj.id)
@@ -523,7 +523,7 @@ def export_package(proj: Project) -> Path:
     tmp.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(tmp, "w") as z:
         z.writestr("index.html", player_html(proj, proj.output, tracks), compress_type=zipfile.ZIP_DEFLATED)
-        z.write(video, proj.output, compress_type=zipfile.ZIP_STORED)           # 视频本身已经压缩过
+        z.write(video, proj.output, compress_type=zipfile.ZIP_STORED)           # the video is already compressed
         for t in tracks:
             for f in (t.vtt, t.srt):
                 if (out_dir / f).exists():

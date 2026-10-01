@@ -1,4 +1,4 @@
-"""商用配音服务（豆包、MiniMax、通义）：请求格式、返回解析、切段拼接、语速、报错、音色列表、设置、和配音流程接上（全部模拟，不联网、不花钱）。"""
+"""Paid voice services (Doubao, MiniMax, Qwen): request format, response parsing, chunking and joining, speed, errors, voice lists, settings, integration with the voice-over flow (all simulated, offline, no cost)."""
 import base64
 import json
 import os

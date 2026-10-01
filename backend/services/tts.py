@@ -1,7 +1,7 @@
-"""语音合成。
+"""Speech synthesis.
 
-主引擎：edge-tts（微软 Edge 神经网络语音，免费、无需 Key、支持多语言）
-兜底：pyttsx3（Windows SAPI5，离线）
+Main engine: edge-tts (Microsoft Edge neural voices; free, no key, many languages)
+Fallback: pyttsx3 (Windows SAPI5, offline)
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from . import ffmpeg_util
 
 _voices_cache: Dict[str, Any] = {"ts": 0.0, "data": []}
 
-# 每种语言的推荐声音（界面默认值）
+# Recommended voice per language (UI defaults)
 DEFAULT_VOICES = {
     "zh-CN": "zh-CN-XiaoxiaoNeural",
     "zh-TW": "zh-TW-HsiaoChenNeural",
@@ -79,7 +79,7 @@ def default_voice(language: str) -> str:
 
 
 def _run_async(coro):
-    """在当前（工作）线程里跑 asyncio 协程。"""
+    """Run an asyncio coroutine in the current (worker) thread."""
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -97,7 +97,7 @@ def _run_async(coro):
 
 
 def list_voices(force: bool = False) -> List[Dict[str, str]]:
-    """返回 edge-tts 可用声音列表（带 5 分钟缓存）。"""
+    """List of available edge-tts voices (cached for 5 minutes)."""
     now = time.time()
     if not force and _voices_cache["data"] and now - _voices_cache["ts"] < 300:
         return _voices_cache["data"]
@@ -137,10 +137,10 @@ async def _edge_synth(text: str, voice: str, out_path: Path,
         async for chunk in comm.stream():
             if chunk["type"] == "audio":
                 f.write(chunk["data"])
-            # 英文一般给 WordBoundary，中文给 SentenceBoundary，两者都收
+            # English usually gets WordBoundary, Chinese SentenceBoundary; collect both
             elif chunk["type"] in ("WordBoundary", "SentenceBoundary"):
                 boundaries.append({
-                    "t": chunk["offset"] / 10_000_000.0,       # 100ns -> 秒
+                    "t": chunk["offset"] / 10_000_000.0,       # 100 ns -> seconds
                     "d": chunk["duration"] / 10_000_000.0,
                     "text": chunk.get("text", ""),
                 })
@@ -157,7 +157,7 @@ def _pyttsx3_synth(text: str, out_path: Path) -> None:
 
 def synth(text: str, voice: str, out_path: Path,
           rate: str = "", volume: str = "", pitch: str = "") -> Tuple[float, List[Dict[str, float]]]:
-    """合成一段语音，返回 (时长秒, 词边界列表)。音色带服务前缀（doubao: / minimax: / qwen:）的交给商用服务。"""
+    """Synthesise speech; returns (duration in seconds, word boundaries). Voices with a service prefix (doubao: / minimax: / qwen:) go to the paid services."""
     text = (text or "").strip()
     if not text:
         raise TTSError(i18n.t("解说文本为空。"))
@@ -179,7 +179,7 @@ def synth(text: str, voice: str, out_path: Path,
         if not part.exists() or part.stat().st_size < 512:
             raise TTSError(i18n.t("edge-tts 返回空音频"))
     except Exception as e:
-        # 兜底：SAPI5（只能生成 wav，且无词边界）
+        # fallback: SAPI5 (wav only, no word boundaries)
         wav = part.with_suffix(".wav")
         try:
             _pyttsx3_synth(text, wav)
@@ -208,7 +208,7 @@ def _card_sidecar(audio_dir: Path, kind: str) -> Path:
 
 
 def card_audio(audio_dir: Path, kind: str, text: str, voice: str = "") -> Optional[Path]:
-    """片头 / 片尾的配音，仅当它正是用当前文案（给了 voice 时还要是这个音色）合成的才返回。"""
+    """Intro / outro voice-over, returned only if it was synthesised from the current text (and, when voice is given, with that voice)."""
     import json
     mp3 = audio_dir / f"__{kind}__.mp3"
     side = _card_sidecar(audio_dir, kind)
@@ -217,16 +217,16 @@ def card_audio(audio_dir: Path, kind: str, text: str, voice: str = "") -> Option
     try:
         raw = side.read_text(encoding="utf-8")
     except OSError:
-        return None          # 没有记录（老版本生成的）也当作过期
+        return None          # no record (made by an old version) also counts as outdated
     try:
         meta = json.loads(raw)
         meta = meta if isinstance(meta, dict) else {"text": raw}
     except ValueError:
-        meta = {"text": raw}  # 上个版本只记了文案
+        meta = {"text": raw}  # the previous version stored only the text
     if meta.get("text") != text.strip():
         return None
     if voice and meta.get("voice") and meta["voice"] != voice:
-        return None          # 换了音色（比如两人问答换了主持人）：要重新合成
+        return None          # the voice changed (e.g. a new host in Q&A mode): synthesise again
     return mp3
 
 
@@ -249,26 +249,26 @@ def synth_project(
     audio_dir: Optional[Path] = None,
     progress: Optional[Callable[[float, str], None]] = None,
 ) -> Dict[str, Any]:
-    """为整个项目（片头 + 每步 + 片尾）合成语音。"""
+    """Synthesise the voice-over for the whole project (intro + every step + outro)."""
     from .. import storage
     audio_dir = audio_dir or storage.audio_dir(proj.id)
     audio_dir.mkdir(parents=True, exist_ok=True)
     dialogue_on = proj.is_dialogue()
     if dialogue_on:
-        # 双人问答：台词按说话人各用各的音色；片头片尾和没有台词的解说由主持人念
+        # two-person Q&A: lines use their speaker's voice; intro, outro and narration without lines are read by the host
         from . import dialogue
         voice = dialogue.speaker(proj, "host").voice
     voice = voice or proj.voice or default_voice(proj.language)
     proj.voice = voice
 
-    # 关掉的片头 / 片尾不会进视频，也就不用花时间配音
+    # a disabled intro / outro isn't in the video, so don't spend time voicing it
     cfg = {**config.load(), **{k: v for k, v in (proj.settings or {}).items() if v is not None}}
     todo: List[Tuple[str, Optional[Step], str]] = []
     if proj.intro and cfg.get("intro_enabled", True):
         todo.append(("__intro__", None, proj.intro))
     for s in proj.steps:
-        # 原声配音永远不被 AI 覆盖；要换成 AI 需要先显式「改用 AI 配音」
-        # 播视频原声的步骤不配音（解说只当字幕）
+        # the user's own recordings are never overwritten by the AI; switching to AI requires an explicit "Switch to AI voice"
+        # steps playing the video's own sound get no voice-over (the narration is only a subtitle)
         if s.include and s.voice_source != "own" and (s.narration or "").strip() and not s.plays_clip_audio():
             todo.append((s.id, s, s.narration))
     if proj.outro and cfg.get("outro_enabled", True):
@@ -317,11 +317,11 @@ _SENT_SPLIT = re.compile(r"(?<=[。！？!?；;\.])\s*")
 
 
 def split_sentences(text: str, max_len: int = 0) -> List[str]:
-    """按标点切句，用于字幕分行。"""
+    """Split into sentences at punctuation, for subtitle lines."""
     text = (text or "").strip()
     if not text:
         return []
-    # 换行也断开：双人问答一句一行，一条字幕不会跨两个人
+    # also break at line breaks: Q&A has one sentence per line, so a subtitle never spans two speakers
     parts = [p.strip() for para in text.split("\n") for p in _SENT_SPLIT.split(para) if p.strip()]
     if not max_len:
         return parts
@@ -331,13 +331,13 @@ def split_sentences(text: str, max_len: int = 0) -> List[str]:
             cut = -1
             for ch in ("，", ",", "、", "；", ";", " "):
                 cut = max(cut, p.rfind(ch, 0, max_len + 1))
-            if cut < max_len // 2:          # 没有合适断点就硬切
+            if cut < max_len // 2:          # no good break point: hard cut
                 cut = max_len - 1
             out.append(p[:cut + 1].strip())
             p = p[cut + 1:].strip()
         if p:
             out.append(p)
-    # 把只剩标点或过短的尾巴并回上一行，避免出现「。」这样的单独字幕
+    # merge a tail that is just punctuation or very short back into the previous line, so a subtitle never shows a lone full stop
     merged: List[str] = []
     for line in out:
         if merged and len(line) <= 2:

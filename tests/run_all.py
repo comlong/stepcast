@@ -1,13 +1,13 @@
-"""跑全部回归测试。
+"""Run all regression tests.
 
-    .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py            # 常规 23 组
-    .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py -k reveal  # 只跑名字里带 reveal 的
-    ... --exe    再测打包出来的 dist\\StepCast（先打包）
-    ... --ppt    再测真 PowerPoint 导出逐条出现（要求 PowerPoint 当前没开着）
-    ... --lint   先跑 ruff
+    .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py            # the regular groups
+    .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py -k reveal  # only tests whose name contains "reveal"
+    ... --exe    also test the packaged dist\\StepCast (build it first)
+    ... --ppt    also test reveal export with real PowerPoint (PowerPoint must not be open)
+    ... --lint   run ruff first
 
-测试都在 tests/_work/ 里用独立的数据目录和 config.json，不碰用户的项目和配置；
-大模型、云端配音全部用假的，不花额度。
+All tests run in tests/_work/ with their own data folders and config.json, never touching the user's projects or settings;
+LLMs and cloud voice services are faked, so no credits are spent.
 """
 import argparse
 import os
@@ -31,7 +31,7 @@ BAD = re.compile(r"\[FAIL\]|Traceback \(most recent call last\)|失败 \d+ 项|�
 
 
 def prepare() -> None:
-    """素材拷进工作目录（测试会在旁边写东西，不直接用 fixtures/）；private/ 里有的一起拷。"""
+    """Copy the fixtures into the work folder (tests write next to them, so fixtures/ isn't used directly); anything in private/ is copied too."""
     WORK.mkdir(parents=True, exist_ok=True)
     for src in (HERE / "fixtures", HERE / "private"):
         if src.is_dir():
@@ -51,7 +51,7 @@ def lint() -> bool:
         return True
     ok = True
     for args in (["--select", "F,E4,E7,E9", "--line-length", "130", "backend", "tools"],
-                 ["--select", "F", "--ignore", "F401,F541", "tests"]):       # 测试是脚本式写法，只查真错误
+                 ["--select", "F", "--ignore", "F401,F541", "tests"]):       # the tests are script-style; only check for real errors
         r = subprocess.run([ruff, "check", "--isolated", *args], cwd=ROOT, capture_output=True, text=True, errors="replace")
         if r.returncode:
             ok = False

@@ -1,4 +1,4 @@
-"""片头 / 片尾自定义背景：接口 + 渲染。在隔离目录里做，不碰用户项目，也不调用本机 PowerPoint。"""
+"""Custom intro / outro backgrounds: API + rendering. Runs in an isolated folder, never touches the user's projects or calls the local PowerPoint."""
 import io, os, shutil, subprocess, sys, time
 from pathlib import Path
 SP = Path(sys.argv[1]); DATA = SP / "cards_projects"
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend import config
 config.CONFIG_PATH = DATA / "config.json"; config._cache = None
-from fixtures_build import make_capture_project  # 假的网页录制项目，不用真实项目
+from fixtures_build import make_capture_project  # a fake recorded project instead of a real one
 PID = make_capture_project(DATA)
 config.save({"ui_language": "zh"})
 from fastapi.testclient import TestClient
@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw
 from backend import main, storage
 from backend.services import slides as S
 S.powerpoint_available = lambda: False
-S._soffice = lambda: None                      # 模拟同事电脑：没有 PowerPoint 也没有 LibreOffice
+S._soffice = lambda: None                      # simulate a colleague's computer: neither PowerPoint nor LibreOffice
 c = TestClient(main.app, base_url="http://127.0.0.1:8756"); H = {"Origin": "http://127.0.0.1:8756"}
 fails = []
 def check(name, cond, detail=""):
@@ -28,11 +28,11 @@ def wait(j):
         if r["status"] not in ("pending", "running"): return r
         time.sleep(0.2)
 
-# 老项目（没有 intro_card 字段）也能读
+# old projects (without the intro_card field) can still be read
 p = c.get(f"/api/projects/{PID}").json()
 check("老项目读出默认的 intro_card", p["intro_card"]["image"] == "" and p["outro_card"]["fit"] == "contain")
 
-# 1) 片头：上传一张亮色照片（4:3，测试「完整显示」时两边用模糊图补齐 + 叠字暗带）
+# 1) intro: upload a bright photo (4:3, to test the blurred fill on both sides for "fit" + the dark band behind the text)
 img = Image.new("RGB", (1600, 1200), (250, 240, 200)); d = ImageDraw.Draw(img)
 for i in range(12):
     d.ellipse((i * 130, 200 + (i % 3) * 200, i * 130 + 300, 500 + (i % 3) * 200), fill=(255, 120 + i * 10, 60))
@@ -47,7 +47,7 @@ prev = c.get(f"/api/projects/{PID}/card/intro/preview?t=1.4&scale=0.5")
 check("片头预览图", prev.status_code == 200 and prev.headers["content-type"] == "image/jpeg")
 (SP / "card_intro_prev.jpg").write_bytes(prev.content)
 
-# 2) 片尾：上传 3 页的 PDF，换到第 2 页
+# 2) outro: upload a 3-page PDF and switch to page 2
 with open(SP / "pptspike" / "export_slides.pdf", "rb") as f:
     r = wait(c.post(f"/api/projects/{PID}/card/outro/background", files={"file": ("结尾页.pdf", f)}, headers=H).json())
 oc = r.get("result") or {}
@@ -59,10 +59,10 @@ bad = c.patch(f"/api/projects/{PID}/card/outro", json={"page": 9}, headers=H)
 check("页码超出范围报错", bad.status_code == 400 and "共 3 页" in bad.json()["detail"], bad.json().get("detail"))
 bad = c.patch(f"/api/projects/{PID}/card/outro", json={"page": "abc"}, headers=H)
 check("页码不是数字报错（不是 500）", bad.status_code == 400, bad.status_code)
-c.patch(f"/api/projects/{PID}", json={"outro": ""}, headers=H)          # 片尾没有文案：只显示背景页
+c.patch(f"/api/projects/{PID}", json={"outro": ""}, headers=H)          # outro without text: only the background page is shown
 (SP / "card_outro_prev.jpg").write_bytes(c.get(f"/api/projects/{PID}/card/outro/preview?t=1.4&scale=0.5").content)
 
-# 3) 没有 PowerPoint / LibreOffice 时上传 PPTX：给出能看懂的提示
+# 3) uploading a PPTX without PowerPoint / LibreOffice: give an understandable message
 with open(SP / "notes_deck.pptx", "rb") as f:
     r = wait(c.post(f"/api/projects/{PID}/card/intro/background", files={"file": ("封面.pptx", f)}, headers=H).json())
 check("没有 PowerPoint 时 PPT 报清楚的错", r["status"] == "error" and "PowerPoint" in r["error"] and "PDF" in r["error"], r.get("error"))
@@ -71,7 +71,7 @@ check("失败时原来的片头背景不受影响", p["intro_card"]["image"] == 
 bad = c.post(f"/api/projects/{PID}/card/intro/background", files={"file": ("a.txt", b"x")}, headers=H)
 check("不支持的文件类型直接 400", bad.status_code == 400)
 
-# 4) 停留时间 + 渲染
+# 4) display time + render
 c.patch(f"/api/projects/{PID}/card/intro", json={"duration": 5}, headers=H)
 r = wait(c.post(f"/api/projects/{PID}/render", json={"width": 1280, "height": 720, "fps": 15}, headers=H).json())
 check("渲染成功", r["status"] == "done", r.get("error"))
@@ -83,11 +83,11 @@ steps = sum(s["duration"] for s in p["steps"] if s["include"])
 ia = DATA / PID / "audio" / "__intro__.mp3"
 ad = float(subprocess.run([PROBE, "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1",
                            str(ia)], capture_output=True, text=True).stdout or 0) if ia.exists() else 0
-intro = max(5, ad + 0.3) if ad else 5          # 设了 5 秒，但不能比片头配音短
+intro = max(5, ad + 0.3) if ad else 5          # 5 seconds were set, but never shorter than the intro voice-over
 check("片头按设的停留时间（不短于配音）、片尾（只有背景、没文案）也在视频里",
       abs(dur - (steps + intro + 2.6)) < 0.8,
       f"总长 {dur:.1f}s = 步骤 {steps:.1f}s + 片头 {intro:.1f}s（配音 {ad:.1f}s）+ 片尾 2.6s")
-# 没有配音时，停留时间就是设的值
+# without voice-over, the display time is exactly the configured value
 c.patch(f"/api/projects/{PID}", json={"intro": ""}, headers=H)
 from backend.services import video as V
 proj = storage.load(PID)
@@ -97,12 +97,12 @@ for name, ts in (("intro", 2.5), ("outro", dur - 1.2)):
     subprocess.run([FF, "-hide_banner", "-loglevel", "error", "-y", "-ss", f"{ts:.2f}", "-i", str(mp4),
                     "-frames:v", "1", str(SP / f"card_{name}_video.png")], check=True)
 
-# 5) 恢复默认：删掉文件夹，停留时间保留
+# 5) reset to default: the folder is deleted, the display time is kept
 folder = DATA / PID / "cards" / ic["image"].split("/")[0]
 p = c.delete(f"/api/projects/{PID}/card/intro/background", headers=H).json()
 check("恢复默认背景", p["intro_card"]["image"] == "" and not folder.exists())
 check("恢复默认后停留时间保留", p["intro_card"]["duration"] == 5)
-# 背景文件被手动删掉：回到默认背景，不报错
+# background file deleted by hand: back to the default background without errors
 shutil.rmtree(DATA / PID / "cards", ignore_errors=True)
 prev = c.get(f"/api/projects/{PID}/card/outro/preview?t=1.4&scale=0.5")
 check("背景文件丢了也能出预览（回到默认背景）", prev.status_code == 200)

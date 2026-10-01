@@ -1,11 +1,11 @@
-"""敏感信息识别与打码。
+"""Detecting and redacting sensitive information.
 
-两条路：
-  1. 录制时：Chrome 扩展遍历 DOM，用 Range 拿到每个命中子串的**精确**矩形（最准）
-  2. 事后：在编辑器里按关键词 / 内置规则扫描本机存下来的文字索引（整段文字打码，保守）
+Two paths:
+  1. While recording: the Chrome extension walks the DOM and uses Range to get the **exact** rectangle of every matched substring (most accurate)
+  2. Afterwards: in the editor, scan the locally stored text index with keywords / built-in rules (whole text nodes are redacted, conservative)
 
-除了画面打码，还会把命中的文字从 page_title / element_text / 输入值里抹掉 ——
-这三个字段是唯一会发给大模型的内容，抹掉就不会外泄。
+Besides redacting the image, matched text is also masked in page_title / element_text / input values —
+these three fields are the only content sent to the LLM, so masking them keeps it from leaking.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from ..models import Project, Redaction, Step, TextNode
 
-# ---- 内置规则 -------------------------------------------------------------
+# ---- built-in rules -------------------------------------------------------------
 
 PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("email", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
@@ -26,21 +26,21 @@ PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("ip", re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")),
 ]
 
-# 标签邻近法：「姓名：张三」「Name: John Smith」
+# Label proximity: "姓名：张三" / "Name: John Smith"
 LABELED_NAME = re.compile(
     r"(?:姓\s*名|名\s*字|联系人|负责人|申请人|操作人|创建人|员工|学员|讲师|用户名|"
     r"Name|Owner|Contact|Employee|User)\s*[:：]\s*"
     r"([一-龥]{2,4}|[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})"
 )
 
-# 百家姓（覆盖常见姓氏；两字复姓单列）
+# Common Chinese surnames (frequent single-character surnames; two-character compound surnames listed separately)
 SURNAMES = set(
     "王李张刘陈杨黄赵吴周徐孙马朱胡郭何高林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤"
 )
 COMPOUND_SURNAMES = {"欧阳", "司马", "诸葛", "上官", "夏侯", "皇甫", "尉迟", "公孙",
                      "慕容", "长孙", "宇文", "司徒", "鲜于", "东方", "独孤", "南宫"}
 
-# 首字是姓氏、但在后台界面里几乎必然是普通词的，别误伤
+# words whose first character is a surname but which are almost always ordinary words in admin interfaces; don't flag them
 NAME_STOPLIST = {
     "任务", "任意", "任何", "付款", "付费", "方式", "方法", "方案", "方向", "方便",
     "高级", "高度", "高亮", "高效", "金额", "金融", "白色", "白名", "马上", "石油",
@@ -57,12 +57,12 @@ KIND_LABEL = {
     "ip": "IP 地址", "name": "人名", "keyword": "关键词", "manual": "手动",
 }
 
-# 纯数字里这些明显不是敏感信息
-_NOT_BANK = re.compile(r"^(?:19|20)\d{2}[01]\d[0-3]\d")   # 看着像日期串
+# digit strings that are clearly not sensitive
+_NOT_BANK = re.compile(r"^(?:19|20)\d{2}[01]\d[0-3]\d")   # looks like a date string
 
 
 def mask(text: str, kind: str = "") -> str:
-    """把一段命中的文字换成掩码。"""
+    """Replace a matched piece of text with a mask."""
     text = text or ""
     if kind == "name" and 1 < len(text) <= 4 and all("一" <= c <= "龥" for c in text):
         return text[0] + "*" * (len(text) - 1)
@@ -74,12 +74,12 @@ def mask(text: str, kind: str = "") -> str:
     return text[:1] + "*" * min(6, len(text) - 2) + text[-1:]
 
 
-# ---- 文本扫描 -------------------------------------------------------------
+# ---- text scanning -------------------------------------------------------------
 
 def find_matches(text: str, keywords: Iterable[str] = (), builtin: bool = True,
                  names: bool = True,
                  names_guess: bool = False) -> List[Tuple[str, int, int, str]]:
-    """返回 [(kind, start, end, 原文)]，按起点排序且不重叠。"""
+    """Returns [(kind, start, end, original text)], sorted by start and non-overlapping."""
     text = text or ""
     hits: List[Tuple[str, int, int, str]] = []
 
@@ -99,12 +99,12 @@ def find_matches(text: str, keywords: Iterable[str] = (), builtin: bool = True,
                 hits.append((kind, m.start(), m.end(), s))
 
     if names:
-        # 「姓名：张三」这种带标签的，准确率高，默认开
+        # labelled names such as "Name: John Smith": high precision, on by default
         for m in LABELED_NAME.finditer(text):
             hits.append(("name", m.start(1), m.end(1), m.group(1)))
 
     if names_guess:
-        # 整段就是一个像中文名的短串。会误报（「任务」「付款」首字也是姓），默认关
+        # the whole text is a short string that looks like a Chinese name. False positives (ordinary words can start with a surname character), off by default
         t = text.strip()
         if 2 <= len(t) <= 4 and all("一" <= c <= "龥" for c in t) \
                 and t not in NAME_STOPLIST \
@@ -124,7 +124,7 @@ def find_matches(text: str, keywords: Iterable[str] = (), builtin: bool = True,
 
 def mask_text(text: str, keywords: Iterable[str] = (), builtin: bool = True,
               names: bool = True, names_guess: bool = False) -> Tuple[str, int]:
-    """把一段文字里的敏感内容替换成掩码，返回 (新文本, 命中数)。"""
+    """Replace the sensitive content of a text with masks; returns (new text, number of matches)."""
     hits = find_matches(text, keywords, builtin, names, names_guess)
     if not hits:
         return text, 0
@@ -138,13 +138,13 @@ def mask_text(text: str, keywords: Iterable[str] = (), builtin: bool = True,
     return "".join(out), len(hits)
 
 
-# ---- 区域计算 -------------------------------------------------------------
+# ---- regions ---------------------------------------------------------------------
 
-MULTILINE_H = 36.0     # 超过这个高度就当成多行，整块打码而不是按字符估算
+MULTILINE_H = 36.0     # taller than this counts as multi-line: redact the whole block instead of estimating per character
 
 
 def _rect_for(node: TextNode, start: int, end: int) -> Tuple[float, float, float, float]:
-    """在一段文字节点里，估算某个子串的矩形。"""
+    """Estimate the rectangle of a substring inside a text node."""
     n = max(1, len(node.t))
     if node.h > MULTILINE_H or (end - start) >= n:
         return (node.x, node.y, node.w, node.h)
@@ -168,13 +168,13 @@ def _overlaps(a: Redaction, b: Tuple[float, float, float, float], thresh: float 
 def scan_step(step: Step, keywords: Iterable[str] = (), builtin: bool = True,
               names: bool = True, names_guess: bool = False, mode: str = "blur",
               also_mask_text: bool = True) -> Dict[str, int]:
-    """扫描一个步骤：加打码区域 + 抹掉文字字段里的敏感内容。"""
+    """Scan one step: add redaction boxes + mask sensitive content in the text fields."""
     keywords = [k for k in keywords if (k or "").strip()]
     added = 0
     pad = 3.0
 
     for node in step.text_nodes:
-        # 录制时判定这段文字在「姓名」列里，那它整段就是人名，不用猜姓氏
+        # during recording this text was found in a "name" column, so the whole text is a name; no surname guessing needed
         guess = names_guess or (names and node.n)
         for kind, s, e, raw in find_matches(node.t, keywords, builtin, names, guess):
             x, y, w, h = _rect_for(node, s, e)
@@ -197,7 +197,7 @@ def scan_project(proj: Project, keywords: Iterable[str] = (), builtin: bool = Tr
     targets = [s for s in proj.steps if not ids or s.id in ids]
     total = {"regions": 0, "masked": 0, "steps": 0}
 
-    # 第一遍：画面打码，同时把命中的原文收集起来
+    # pass 1: redact the image and collect the matched original texts
     found: set[str] = set()
     for s in targets:
         r = scan_step(s, keywords, builtin, names, names_guess, mode,
@@ -209,7 +209,7 @@ def scan_project(proj: Project, keywords: Iterable[str] = (), builtin: bool = Tr
             if red.label and len(red.label) >= 2:
                 found.add(red.label)
 
-    # 第二遍：用「全项目找到的所有敏感值」清洗会外发的文字字段
+    # pass 2: clean the text fields that are sent out, using "all sensitive values found in the whole project"
     kw2 = list(keywords) + sorted(found)
     for s in targets:
         n = mask_step_texts(s, kw2, builtin, names, names_guess)
@@ -219,7 +219,7 @@ def scan_project(proj: Project, keywords: Iterable[str] = (), builtin: bool = Tr
 
 def mask_step_texts(step: Step, keywords: Iterable[str] = (), builtin: bool = True,
                     names: bool = True, names_guess: bool = False) -> int:
-    """只清洗文字字段（页面标题 / 元素文字 / 输入值），不动画面。"""
+    """Only clean the text fields (page title / element text / input values); the image is untouched."""
     masked = 0
     for attr in ("page_title", "value"):
         new, n = mask_text(getattr(step, attr), keywords, builtin, names, names_guess)
@@ -236,7 +236,7 @@ def mask_step_texts(step: Step, keywords: Iterable[str] = (), builtin: bool = Tr
 
 
 def clear_auto(proj: Project, only_steps: Optional[Iterable[str]] = None) -> int:
-    """删掉所有自动识别的打码框（手动画的保留）。"""
+    """Remove all automatically detected redaction boxes (hand-drawn ones stay)."""
     ids = set(only_steps or [])
     n = 0
     for s in proj.steps:
@@ -249,7 +249,7 @@ def clear_auto(proj: Project, only_steps: Optional[Iterable[str]] = None) -> int
 
 
 def clear_index(proj: Project) -> int:
-    """清空本机存的页面文字索引（清空后就不能再按关键词补打码了）。"""
+    """Clear the locally stored page text index (after that, keywords can no longer be redacted afterwards)."""
     n = 0
     for s in proj.steps:
         n += len(s.text_nodes)

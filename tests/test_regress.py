@@ -1,4 +1,4 @@
-"""接口级回归测试：每条后台任务链路走一遍 HTTP，确认「快照 + 合并」改造没有破坏正常流程。"""
+"""API-level regression test: every background job chain once over HTTP, confirming that "snapshot + merge" didn't break the normal flow."""
 import json
 import os
 import re
@@ -23,7 +23,7 @@ from backend import main, storage  # noqa: E402
 from backend.services import script_gen, tts, video  # noqa: E402
 import selftest  # noqa: E402
 from backend import config as _cfg  # noqa: E402
-# 不读你真实的 config.json（里面的默认音色可能不是中文，念不了测试里的中文解说）
+# don't read your real config.json (its default voice may not be Chinese and couldn't read the Chinese narration in this test)
 _cfg.CONFIG_PATH = DATA / 'config.json'
 _cfg.CONFIG_PATH.write_text('{"ui_language": "zh", "language": "zh-CN", "voice": "zh-CN-XiaoxiaoNeural"}', encoding='utf-8')
 _cfg._cache = None
@@ -50,7 +50,7 @@ def wait(j, timeout=300):
 
 
 class FakeLLM:
-    """根据提示词里的内容造回复：解说按 i 生成，翻译按 k 生成。"""
+    """Build a reply from the prompt content: narration generated per i, translations per k."""
 
     def __init__(self, *a, **k):
         pass

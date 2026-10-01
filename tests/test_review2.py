@@ -1,5 +1,5 @@
-"""第二轮检查修的问题：旋转 / 无时长 / 非方形像素的视频、插入视频的封面、转写字幕随截取移动、
-解说不覆盖原声字幕、翻译原声字幕、并行渲染出错立即停、步骤序号、硬链接、探测缓存。"""
+"""Fixes from the second review: rotated / duration-less / non-square-pixel videos, posters of inserted videos, transcribed subtitles following the trim,
+narration not overwriting original-sound subtitles, translating original-sound subtitles, parallel renders stopping at the first error, step numbers, hard links, probe cache."""
 import os, shutil, subprocess, sys, time
 from pathlib import Path
 
@@ -75,7 +75,7 @@ check("webm 时长正确", abs(web["clip"]["duration"] - 6.0) < 0.1, web["clip"]
 tmp_left = list((config.DATA_DIR / "_tmp").glob("*"))
 check("上传的临时文件没留下", not tmp_left, tmp_left[:2])
 
-# 「只显示封面」：以前插入的视频没有底图，画面是空的
+# "poster only": inserted videos used to have no base image, so the frame was empty
 c.patch(f"/api/projects/{pid}/steps/{sid_rot}/video", json={"mode": "poster"}, headers=H)
 img = Image.open(__import__("io").BytesIO(c.get(f"/api/projects/{pid}/steps/{sid_rot}/preview?scale=1").content)).convert("RGB")
 mid = img.crop((img.width // 2 - 40, img.height // 2 - 40, img.width // 2 + 40, img.height // 2 + 40))
@@ -83,7 +83,7 @@ extrema = [e[1] - e[0] for e in mid.getextrema()]
 check("「只显示封面」有画面（不是空白）", max(extrema) > 60, extrema)
 c.patch(f"/api/projects/{pid}/steps/{sid_rot}/video", json={"mode": "fullscreen"}, headers=H)
 
-# 换一个视频：封面跟着换，旧封面删掉
+# replacing the video: the poster changes too and the old one is deleted
 old_shot = rot["screenshot"]
 with open(V2 / "plain.mp4", "rb") as f:
     wait(c.post(f"/api/projects/{pid}/steps/{sid_rot}/video", files={"file": ("plain.mp4", f)}, headers=H).json())
@@ -106,7 +106,7 @@ out = subprocess.run([PROBE, "-v", "error", "-show_entries", "format=duration", 
                      capture_output=True, text=True).stdout
 frame = SP / "review2_frame.png"
 t_rot = [x for x in pj["steps"] if x["id"] == sid_rot][0]
-# 片头 + 竖视频：取竖视频中间一帧，左右应是黑边、中间有画面
+# intro + portrait video: take a frame from the middle of the portrait video; black bars left and right, picture in the middle
 subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "2.0", "-i", str(mp4), "-frames:v", "1", str(frame)])
 fr = Image.open(frame).convert("L")
 side = fr.crop((20, 100, 200, 400)).getextrema()
@@ -139,7 +139,7 @@ sp2 = next(s for s in steps(pid) if s["id"] == sid_sp)
 c1 = cues_for(sp2)
 check("截取起点往后挪 0.5 秒，字幕也提前 0.5 秒", c1 and abs((c0[-1].end - c1[-1].end) - 0.5) < 0.05,
       (c0[-1].end, c1[-1].end if c1 else None, len(c0)))
-# 前端改解说时不再带 caption；后端改解说也不应动字幕的逐词时间
+# the frontend no longer sends caption when editing the narration; a backend narration edit must not touch the subtitle's word times either
 c.patch(f"/api/projects/{pid}/steps/{sid_sp}", json={"narration": "随便写的解说"}, headers=H)
 sp3 = next(s for s in steps(pid) if s["id"] == sid_sp)
 check("写了解说：字幕和逐词时间都还在", sp3["caption"] == sp["caption"] and sp3["clip"]["words"] == words)

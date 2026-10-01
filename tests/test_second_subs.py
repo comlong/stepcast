@@ -1,4 +1,4 @@
-"""第二语言字幕：渲染时记下主字幕、给第二字幕留位置、按句合并、AI 翻译（假的）、VTT/SRT、过期、删除、网页播放包、老视频。"""
+"""Second-language subtitles: main subtitles recorded at render time, room left for the second subtitle, sentence merging, AI translation (fake), VTT/SRT, outdated tracks, deletion, web player package, old videos."""
 import io
 import json
 import os
@@ -64,7 +64,7 @@ class FakeLLM:
         out = []
         for it in items:
             if lang == "DE" and it["i"] == 1 and len(FakeLLM.calls) == 1:
-                continue                                              # 第一次漏一句，看会不会补
+                continue                                              # drop one sentence the first time to see whether it is asked again
             t = f"[{lang}] " + it["t"]
             if "长句" in it["t"]:
                 t = f"[{lang}] " + "This is a very long translated sentence, with a comma in the middle, " * 2
@@ -81,7 +81,7 @@ th2 = Theme.from_config({"video_width": 1280, "video_height": 720, "burn_subtitl
 
 
 def sub_box(theme):
-    """一行主字幕底框的上沿、下沿（画面高度的比例）"""
+    """Top and bottom edge of a one-line main subtitle box (fraction of the frame height)"""
     img = Image.new("RGB", (1280, 720), (0, 0, 0))
     draw_subtitle(img, "主字幕测试", theme)
     ys = [y for y in range(720) if img.getpixel((640, y)) != (0, 0, 0)]

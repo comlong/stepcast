@@ -1,4 +1,4 @@
-"""视频步骤的其余情况：剪辑设置、链接 / 在线视频补传、组合里的视频、插入视频、讲话转字幕、删除、渲染中途停止。"""
+"""Other video step cases: trim settings, uploading linked / online videos later, videos in groups, inserted videos, speech to subtitles, deletion, stopping a render halfway."""
 import json, os, shutil, subprocess, sys, time
 from pathlib import Path
 

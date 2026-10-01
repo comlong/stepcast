@@ -1,4 +1,4 @@
-"""极简后台任务队列：生成脚本 / 语音 / 视频都跑在工作线程里，前端轮询进度。"""
+"""Minimal background job queue: scripts / voice-over / videos are generated in worker threads, the frontend polls progress."""
 from __future__ import annotations
 
 import threading
@@ -11,11 +11,11 @@ from .. import i18n
 from ..i18n import N_
 
 _jobs: Dict[str, Dict[str, Any]] = {}
-_objects: Dict[str, "Job"] = {}          # 运行中的任务对象（用来发停止信号）
+_objects: Dict[str, "Job"] = {}          # running job objects (used to send the stop signal)
 _lock = threading.RLock()
 MAX_KEEP = 60
 
-# 这些任务会整体改写同一个项目，同一项目同时只允许跑一个
+# These jobs rewrite the same project as a whole; only one may run per project at a time
 HEAVY = {"script", "translate", "tts", "render", "auto", "magic_mic", "subtitles2"}
 
 KIND_NAME = {
@@ -35,10 +35,10 @@ class JobConflict(RuntimeError):
 
 
 class JobCancelled(BaseException):
-    """用户点了停止。
+    """The user clicked Stop.
 
-    继承 BaseException：各个服务里大量 `except Exception` 做重试 / 兜底，
-    不能让它们把「停止」当成普通错误吞掉或转换掉。
+    Derived from BaseException: the services use `except Exception` a lot for retries / fallbacks,
+    and they must not swallow or convert "stop" as if it were an ordinary error.
     """
 
 
@@ -46,7 +46,7 @@ _local = threading.local()
 
 
 def check_cancel() -> None:
-    """在任务线程里的任意位置调用：用户点了停止就立即抛出 JobCancelled。"""
+    """Call anywhere in a job thread: raises JobCancelled immediately if the user clicked Stop."""
     job = getattr(_local, "job", None)
     if job is not None:
         job.check()
@@ -76,8 +76,8 @@ class Job:
             raise JobCancelled()
 
     def progress(self, frac: float, message: str = "") -> None:
-        # 各个服务都会频繁汇报进度（渲染每 12 帧、配音每一步、识别每一句），
-        # 在这里检查停止标记，就不用在每个服务里单独埋检查点
+        # every service reports progress often (rendering every 12 frames, voice-over per step, recognition per sentence);
+        # checking the stop flag here means no service needs its own checkpoints
         self.check()
         with _lock:
             self.data["progress"] = max(0.0, min(1.0, float(frac)))
@@ -92,7 +92,7 @@ class Job:
 
 def _snapshot(j: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(j)
-    out["log"] = list(j["log"])      # 别把正在被写的 list 交给 JSON 序列化
+    out["log"] = list(j["log"])      # don't hand the list being written to JSON serialisation
     return out
 
 
@@ -109,10 +109,10 @@ def _gc() -> None:
 
 def submit(kind: str, fn: Callable[[Job], Any], project_id: str = "",
            exclusive: Optional[Iterable[str]] = None) -> Dict[str, Any]:
-    """启动任务。fn 接收 Job 对象，返回值写进 result。
+    """Start a job. fn receives the Job object; its return value goes into result.
 
-    exclusive：同一项目里与之冲突的任务种类。已有同种任务在跑 -> 直接返回那个任务（防连点）；
-    有其他冲突任务在跑 -> 抛 JobConflict。
+    exclusive: job kinds that conflict within the same project. A job of the same kind already running -> return that job (guards against double clicks);
+    another conflicting job running -> raise JobConflict.
     """
     with _lock:
         if project_id and exclusive:
@@ -134,7 +134,7 @@ def submit(kind: str, fn: Callable[[Job], Any], project_id: str = "",
             job.data["status"] = "running"
             job.data["message"] = i18n.t("开始…")
         try:
-            job.check()                       # 排队期间就被停止了
+            job.check()                       # stopped while still queued
             result = fn(job)
             with _lock:
                 job.data["status"] = "done"
@@ -165,7 +165,7 @@ def submit(kind: str, fn: Callable[[Job], Any], project_id: str = "",
 
 
 def cancel(job_id: str) -> Optional[Dict[str, Any]]:
-    """请求停止一个任务。任务会在下一个检查点（通常一秒以内）真正停下。"""
+    """Request a job to stop. It actually stops at its next checkpoint (usually within a second)."""
     with _lock:
         data = _jobs.get(job_id)
         if data is None:

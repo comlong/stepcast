@@ -1,6 +1,6 @@
-/* StepCast 录制器 — 后台服务工作线程
+/* StepCast recorder — background service worker
  *
- * 负责：维护录制状态、截图（带限流）、把步骤 POST 给本地 Python 服务。
+ * Keeps the recording state, takes screenshots (rate-limited) and POSTs the steps to the local Python service.
  */
 
 importScripts('i18n.js');
@@ -16,12 +16,12 @@ const DEFAULTS = {
   captureScroll: false,
   imageFormat: 'png',       // png | jpeg
   jpegQuality: 92,
-  autoRedact: true,         // 录制时自动识别邮箱/手机号/身份证/银行卡/IP 并打码
-  indexText: true,          // 记录页面文字位置，便于事后按关键词补打码
-  redactKeywords: '',       // 额外要打码的词，逗号分隔
-  magicMic: false,          // 边录边讲：录制时同时录麦克风
+  autoRedact: true,         // detect and redact e-mail / phone / ID / bank card / IP while recording
+  indexText: true,          // record positions of page text, for redacting keywords afterwards
+  redactKeywords: '',       // additional words to redact, comma separated
+  magicMic: false,          // narrate while recording: record the microphone during recording
   micDeviceId: '',
-  micMode: 'ai',            // ai = 识别成文字交给 AI 配音 | own = 保留原声
+  micMode: 'ai',            // ai = transcribe and voice with AI | own = keep the original voice
   micLanguage: 'en-US',
   micActive: false,
   lastMicJob: '',
@@ -55,7 +55,7 @@ function updateBadge(s) {
   }
 }
 
-/* ---------- 截图（Chrome 限制约每秒 2 次，这里串行 + 限流） ---------- */
+/* ---------- screenshots (Chrome allows about 2 per second; serialised + rate-limited here) ---------- */
 
 let captureChain = Promise.resolve();
 let lastCaptureAt = 0;
@@ -64,7 +64,7 @@ const MIN_GAP = 620;
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function tellTab(tabId, msg) {
-  try { await chrome.tabs.sendMessage(tabId, msg); } catch (e) { /* 页面没有 content script */ }
+  try { await chrome.tabs.sendMessage(tabId, msg); } catch (e) { /* no content script on the page */ }
 }
 
 async function rawCapture(windowId, format, quality) {
@@ -72,7 +72,7 @@ async function rawCapture(windowId, format, quality) {
   return await chrome.tabs.captureVisibleTab(windowId, opts);
 }
 
-/** 串行排队截图，并在截图前隐藏页面上的录制浮层。 */
+/** Take screenshots one at a time, hiding the recording overlay on the page first. */
 function captureTab(tab, { hideOverlay = true } = {}) {
   const run = async () => {
     const s = await getState();
@@ -86,7 +86,7 @@ function captureTab(tab, { hideOverlay = true } = {}) {
     try {
       dataUrl = await rawCapture(tab.windowId, s.imageFormat, s.jpegQuality);
     } catch (e) {
-      // 限流或权限问题，等一下重试一次
+      // rate limit or permission problem: wait a moment and retry once
       await sleep(700);
       try {
         dataUrl = await rawCapture(tab.windowId, s.imageFormat, s.jpegQuality);
@@ -102,7 +102,7 @@ function captureTab(tab, { hideOverlay = true } = {}) {
   return captureChain;
 }
 
-/* ---------- 边录边讲 ---------- */
+/* ---------- narrate while recording ---------- */
 
 async function ensureOffscreen() {
   const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
@@ -138,7 +138,7 @@ async function startMic(s) {
   }
 }
 
-/** 停止录音并上传。不等上传结束就返回，编辑器会轮询识别进度。 */
+/** Stop recording and upload. Returns without waiting for the upload; the editor polls the recognition progress. */
 async function stopMic(s, projectId) {
   if (!s.micActive) return;
   await setState({ micActive: false });
@@ -147,16 +147,16 @@ async function stopMic(s, projectId) {
   }).then(async (r) => {
     if (r && r.ok) await setState({ lastMicJob: r.job || '' });
     else await setState({ lastError: t('录音上传失败：{error}', { error: (r && r.error) || t('未知错误') }) });
-    // 上传期间如果又开始了新的录制，录音页正在用，不能关
+    // if a new recording started during the upload, the recording page is in use and must not be closed
     if (!(await getState()).micActive) {
-      try { await chrome.offscreen.closeDocument(); } catch (e) { /* 已关闭 */ }
+      try { await chrome.offscreen.closeDocument(); } catch (e) { /* already closed */ }
     }
   }).catch(async (e) => {
     await setState({ lastError: t('录音上传失败：{error}', { error: e.message || e }) });
   });
 }
 
-/* ---------- 与本地服务通信 ---------- */
+/* ---------- talking to the local service ---------- */
 
 async function api(path, body, method = 'POST') {
   const s = await getState();
@@ -178,14 +178,14 @@ async function pingServer() {
     const res = await fetch(s.serverUrl.replace(/\/$/, '') + '/api/health', { cache: 'no-store' });
     if (!res.ok) return { ok: false, error: 'HTTP ' + res.status };
     const data = await res.json();
-    if (data.ui_language) await VTI18N.setLang(data.ui_language);   // 跟编辑器的界面语言走
+    if (data.ui_language) await VTI18N.setLang(data.ui_language);   // follow the editor's interface language
     return { ok: true, data };
   } catch (e) {
     return { ok: false, error: String(e.message || e) };
   }
 }
 
-/* ---------- 录制控制 ---------- */
+/* ---------- recording control ---------- */
 
 async function startRecording(name) {
   const s0 = await getState();
@@ -223,7 +223,7 @@ async function broadcastOverlay(on) {
   }
 }
 
-/** 核心：收到一个操作事件 -> 截图 -> 上报 */
+/** Core: an action event arrives -> screenshot -> report */
 async function recordEvent(evt, tab) {
   const s = await getState();
   if (!s.recording || !s.projectId) return { ok: false, reason: 'not-recording' };
@@ -233,7 +233,7 @@ async function recordEvent(evt, tab) {
     try {
       const r = await chrome.tabs.sendMessage(tab.id, { type: 'vt_scan', cfg: redactCfg(s) });
       if (r) scan = r;
-    } catch (e) { /* 页面没有 content script */ }
+    } catch (e) { /* no content script on the page */ }
   }
 
   const shot = await captureTab(tab);
@@ -269,10 +269,10 @@ async function recordEvent(evt, tab) {
   }
 }
 
-/* ---------- 事件入口 ---------- */
+/* ---------- event entry ---------- */
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg && msg.target === 'offscreen') return false;   // 发给录音页的，不归这里管
+  if (msg && msg.target === 'offscreen') return false;   // meant for the recording page, not handled here
   (async () => {
     try {
       switch (msg.type) {
@@ -312,15 +312,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ ok: false, error: String(e.message || e) });
     }
   })();
-  return true;   // 异步响应
+  return true;   // asynchronous response
 });
 
-// 弹窗或录音页换了语言，后台也跟着换
+// the popup or the recording page changed the language: follow it in the background too
 chrome.storage.onChanged.addListener((changes) => {
   if (changes.vt_ui_lang) VTI18N.setLang(changes.vt_ui_lang.newValue);
 });
 
-/* 页面加载完成后补一张“结果”截图 */
+/* After a page finishes loading, take an extra "result" screenshot */
 const navTimers = new Map();
 chrome.webNavigation.onCompleted.addListener(async (details) => {
   if (details.frameId !== 0) return;
@@ -341,7 +341,7 @@ chrome.webNavigation.onCompleted.addListener(async (details) => {
         target: null,
         point: null
       }, tab);
-    } catch (e) { /* tab 已关闭 */ }
+    } catch (e) { /* tab already closed */ }
   }, 1100));
 });
 

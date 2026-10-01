@@ -1,9 +1,9 @@
-"""「视频」步骤：PPT 里嵌入的视频，或者自己插进教程里的视频文件。
+""""Video" steps: videos embedded in a PPT deck, or video files inserted into a tutorial.
 
-- 导入 PPT 时把每页里的视频取出来，记下它在页面上的位置和 PowerPoint 里设的剪辑起止点；
-  链接到作者电脑上的文件、在线视频（YouTube 等）取不到，标记出来让用户手动上传。
-- 渲染时由 ffmpeg 解码出画面，贴到幻灯片原来的位置（或者全屏），字幕照常画；
-  声音用视频原声（剪好起止点），或者静音后配这一步的解说。
+- On PPT import, the videos on each slide are extracted with their position on the page and the trim points set in PowerPoint;
+  files linked from the author's computer and online videos can't be retrieved and are marked for the user to upload.
+- When rendering, ffmpeg decodes the frames, which are placed at the video's spot on the slide (or full screen), with subtitles drawn as usual;
+  the sound is the video's own (trimmed), or the video is muted and the step's narration is voiced instead.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def media_dir(pid: str) -> Path:
 
 
 def resolve(pid: str, clip: Optional[VideoClip]) -> Optional[Path]:
-    """视频文件的绝对路径；没有或者文件丢了返回 None（渲染时退回只显示封面）。"""
+    """Absolute path of the video file; None if there is none or it went missing (rendering falls back to the poster)."""
     if not clip or not clip.file:
         return None
     base = media_dir(pid).resolve()
@@ -44,7 +44,7 @@ def resolve(pid: str, clip: Optional[VideoClip]) -> Optional[Path]:
     return p if p.is_relative_to(base) and p.is_file() else None
 
 
-# ---- 探测 -------------------------------------------------------------------
+# ---- probing ----------------------------------------------------------------
 
 _DUR = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
 _VIDEO_LINE = re.compile(r"Stream #\S+.*?: Video: (.*)")
@@ -57,9 +57,9 @@ _probe_lock = threading.Lock()
 
 
 def probe(path: Path) -> Dict[str, Any]:
-    """时长、有没有声音、画面显示尺寸（已按旋转、非方形像素换算）。只用 ffmpeg（打包版没有 ffprobe）。
+    """Duration, whether there is sound, display size (corrected for rotation and non-square pixels). Uses ffmpeg only (the package has no ffprobe).
 
-    同一个文件（路径 + 大小 + 修改时间不变）只探测一次：编辑器预览、渲染每一段都要用。"""
+    The same file (path + size + mtime unchanged) is probed only once: the editor preview and every render segment need it."""
     st = path.stat()
     key = (str(path), st.st_size, st.st_mtime_ns)
     with _probe_lock:
@@ -78,7 +78,7 @@ def _probe(path: Path) -> Dict[str, Any]:
     proc = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-i", str(path)],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
     err = (proc.stderr or b"").decode("utf-8", "ignore")
-    # 第一路真正的视频流（跳过 mp3 / m4a 里当封面的图片）
+    # the first real video stream (skips cover images in mp3 / m4a)
     lines = [m.group(1) for m in _VIDEO_LINE.finditer(err)]
     line = next((x for x in lines if "attached pic" not in x), None)
     size = _SIZE.search(line) if line else None
@@ -87,10 +87,10 @@ def _probe(path: Path) -> Dict[str, Any]:
     w, h = int(size.group(1)), int(size.group(2))
     sar = _SAR.search(line)
     if sar and int(sar.group(1)) > 0 and int(sar.group(2)) > 0 and sar.group(1) != sar.group(2):
-        w = max(2, round(w * int(sar.group(1)) / int(sar.group(2))))     # 非方形像素（老 DV、部分 MPEG）
+        w = max(2, round(w * int(sar.group(1)) / int(sar.group(2))))     # non-square pixels (old DV, some MPEG)
     rot = _ROT.search(err)
     if rot and round(abs(float(rot.group(1) or rot.group(2)))) % 180 == 90:
-        w, h = h, w                   # 手机竖着拍的：ffmpeg 解码时会自动转正，尺寸也跟着对调
+        w, h = h, w                   # shot in portrait on a phone: ffmpeg rotates it when decoding, so swap the size too
     m = _DUR.search(err)
     dur = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3)) if m else 0.0
     if dur <= 0:
@@ -100,7 +100,7 @@ def _probe(path: Path) -> Dict[str, Any]:
 
 
 def _scan_duration(path: Path) -> float:
-    """文件头里没写时长（浏览器 / 录屏软件直接录的 webm 常这样）：不解码、只读一遍数据包算出来。"""
+    """No duration in the file header (common for webm recorded by browsers / screen recorders): compute it by reading the packets once, without decoding."""
     proc = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-i", str(path), "-map", "0:v:0",
                            "-c", "copy", "-f", "null", "-"],
                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=CREATE_NO_WINDOW)
@@ -112,7 +112,7 @@ def _scan_duration(path: Path) -> float:
 
 
 def clip_range(c: VideoClip) -> Tuple[float, float]:
-    """实际播放的 [起点, 终点)，已经夹在视频长度以内。"""
+    """The [start, end) actually played, clamped to the video length."""
     total = c.duration if c.duration > 0 else 0.0
     end = c.end if 0 < c.end and (not total or c.end <= total) else total
     start = min(max(0.0, c.start), max(0.0, end - 0.1)) if end else max(0.0, c.start)
@@ -124,12 +124,12 @@ def clip_length(c: VideoClip) -> float:
     return max(0.1, end - start)
 
 
-# ---- 导入 PPT 时取出视频 ------------------------------------------------------
+# ---- extract videos on PPT import ---------------------------------------------
 
 def pptx_videos(pptx_path: Path, out_dir: Path) -> Dict[int, List[Dict[str, Any]]]:
-    """每页里的视频：{页码: [{file, source, rect, start, end, missing, duration, has_audio}]}。
+    """Videos per slide: {slide number: [{file, source, rect, start, end, missing, duration, has_audio}]}.
 
-    嵌入的视频文件写到 out_dir；链接到本机文件的（linked）和在线视频（online）只记下地址。
+    Embedded video files are written to out_dir; linked local files (linked) and online videos (online) only record the address.
     """
     from pptx import Presentation
     from pptx.oxml.ns import qn
@@ -142,7 +142,7 @@ def pptx_videos(pptx_path: Path, out_dir: Path) -> Dict[int, List[Dict[str, Any]
         for el, (x, y, w, h) in _pictures(slide.shapes):
             vf = el.find(".//" + qn("a:videoFile"))
             if vf is None:
-                continue                                   # 图片、音频等别的东西
+                continue                                   # images, audio and other things
             media = el.find(f".//{{{_P14}}}media")
             info: Dict[str, Any] = {
                 "file": "", "missing": "", "duration": 0.0, "has_audio": True,
@@ -152,10 +152,10 @@ def pptx_videos(pptx_path: Path, out_dir: Path) -> Dict[int, List[Dict[str, Any]
             }
             cnv = el.find(".//" + qn("p:cNvPr"))
             if cnv is not None:
-                info["source"] = cnv.get("name") or ""          # PowerPoint 里显示的名字，通常就是原文件名
+                info["source"] = cnv.get("name") or ""          # name shown in PowerPoint, usually the original file name
             trim = media.find(f"{{{_P14}}}trim") if media is not None else None
             if trim is not None:
-                # PowerPoint 的剪辑：st = 从头剪掉多少毫秒，end = 从尾剪掉多少毫秒
+                # PowerPoint trim: st = milliseconds cut from the start, end = milliseconds cut from the end
                 info["start"] = float(trim.get("st") or 0) / 1000
                 info["end_trim"] = float(trim.get("end") or 0) / 1000
             rel = None
@@ -187,7 +187,7 @@ def pptx_videos(pptx_path: Path, out_dir: Path) -> Dict[int, List[Dict[str, Any]
 
 
 def _pictures(shapes, tf: Callable[[float, float, float, float], Tuple[float, float, float, float]] = None):
-    """遍历所有图片形状（含组合里的），坐标换算到页面上。"""
+    """Walk all picture shapes (including those in groups) and convert coordinates to the page."""
     from pptx.enum.shapes import MSO_SHAPE_TYPE
     tf = tf or (lambda x, y, w, h: (x, y, w, h))
     for sh in shapes:
@@ -221,7 +221,7 @@ def _pictures(shapes, tf: Callable[[float, float, float, float], Tuple[float, fl
 
 
 def clip_from_import(info: Dict[str, Any]) -> VideoClip:
-    """导入记录 -> VideoClip（还没有 file，调用方把文件拷进项目后再填）。"""
+    """Import record -> VideoClip (without file; the caller fills it in after copying the file into the project)."""
     from ..models import Rect
     dur = float(info.get("duration") or 0)
     end = max(0.0, dur - float(info.get("end_trim") or 0)) if dur and info.get("end_trim") else 0.0
@@ -230,10 +230,10 @@ def clip_from_import(info: Dict[str, Any]) -> VideoClip:
                      missing=info.get("missing") or "", mode="inset")
 
 
-# ---- 往项目里放视频文件 --------------------------------------------------------
+# ---- put video files into the project -------------------------------------------
 
 def store(pid: str, step: Step, src: Path, original_name: str) -> VideoClip:
-    """把视频文件放进项目的 media/ 目录，更新这一步的 clip（保留原来的位置 / 模式等设置）。"""
+    """Put a video file into the project's media/ folder and update the step's clip (position / mode etc. are kept)."""
     ext = Path(original_name).suffix.lower()
     if ext not in VIDEO_EXT:
         raise ClipError(i18n.t("不支持的视频格式：{ext}（支持 mp4 / mov / wmv / avi / mkv / webm 等）", ext=ext or "?"))
@@ -242,23 +242,23 @@ def store(pid: str, step: Step, src: Path, original_name: str) -> VideoClip:
     info = probe(src)
     d = media_dir(pid)
     d.mkdir(parents=True, exist_ok=True)
-    # 每次换视频都用新文件名：编辑器里的播放器、缩略图不会还显示旧的（浏览器按地址缓存）
+    # every new video gets a new file name so the editor's player and thumbnails don't keep showing the old one (browsers cache by URL)
     name = f"{step.id}_{uuid.uuid4().hex[:8]}{ext}"
-    # 上传的临时文件用完就删，直接挪过去（同一个盘上是改名，几个 GB 的视频也不用再拷一遍）
+    # the uploaded temp file is deleted after use, so move it (a rename on the same drive; even a multi-GB video isn't copied again)
     shutil.move(str(src), str(d / name))
     old = step.clip.file if step.clip else ""
     clip = step.clip.model_copy() if step.clip else VideoClip(mode="fullscreen")
     clip.file, clip.source = name, original_name
     clip.duration, clip.has_audio, clip.missing = info["duration"], info["has_audio"], ""
     clip.start, clip.end = 0.0, 0.0
-    clip.transcript, clip.words = "", []          # 换了视频，之前识别的讲话时间对不上了
+    clip.transcript, clip.words = "", []          # new video: previously recognised speech times no longer match
     if old and old != name:
         (d / old).unlink(missing_ok=True)
     return clip
 
 
 def link_or_copy(src: Path, dst: Path) -> None:
-    """同一个盘上用硬链接（瞬间完成、不占第二份空间），跨盘或不支持时再复制。"""
+    """Hard link on the same drive (instant, no second copy); copy across drives or when unsupported."""
     try:
         os.link(src, dst)
     except OSError:
@@ -266,8 +266,8 @@ def link_or_copy(src: Path, dst: Path) -> None:
 
 
 def save_poster(pid: str, clip: VideoClip) -> Optional[Tuple[str, int, int]]:
-    """插入的视频不在哪页幻灯片上，没有底图：取一帧存成这一步的截图。
-    步骤列表的缩略图、「只显示封面」、导出文档都用它。返回 (文件名, 宽, 高)。"""
+    """An inserted video isn't on any slide and has no base image: grab one frame as this step's screenshot.
+    Used by the step list thumbnail, "poster only" and document export. Returns (file name, width, height)."""
     src = resolve(pid, clip)
     if src is None:
         return None
@@ -290,7 +290,7 @@ def save_poster(pid: str, clip: VideoClip) -> Optional[Tuple[str, int, int]]:
 
 
 def use_poster(pid: str, step: Step, poster: Optional[Tuple[str, int, int]]) -> None:
-    """把 save_poster 的结果设成这一步的截图（旧的封面图删掉）。"""
+    """Set the result of save_poster as this step's screenshot (the old poster is deleted)."""
     if not poster:
         return
     name, w, h = poster
@@ -302,16 +302,16 @@ def use_poster(pid: str, step: Step, poster: Optional[Tuple[str, int, int]]) -> 
 
 
 def clip_words(c: VideoClip) -> List[Dict[str, Any]]:
-    """识别出的逐词时间（从视频开头算）换成从截取起点算，给字幕对齐用。
-    截取范围以外的词时间是负的或超出这一步，对应的字幕不会显示。"""
+    """Convert recognised word times (from the video start) to times from the trim start, for subtitle alignment.
+    Words outside the trimmed range get negative times or times beyond the step, so their subtitles never show."""
     start = clip_range(c)[0]
     return [{**w, "t": float(w.get("t", 0.0)) - start} for w in c.words]
 
 
-# ---- 渲染 -------------------------------------------------------------------
+# ---- rendering -----------------------------------------------------------------
 
 def extract_audio(src: Path, clip: VideoClip, out_wav: Path) -> Optional[Path]:
-    """剪好起止点的原声（48k 立体声 wav）；视频没有声音返回 None。"""
+    """The trimmed original sound (48k stereo wav); None if the video has no sound."""
     if not clip.has_audio:
         return None
     start, _end = clip_range(clip)
@@ -326,8 +326,8 @@ def extract_audio(src: Path, clip: VideoClip, out_wav: Path) -> Optional[Path]:
 
 def placement(clip: VideoClip, draw_box: Optional[Tuple[int, int, int, int]], has_slide: bool,
               W: int, H: int, vw: int, vh: int) -> Tuple[Tuple[int, int, int, int], bool]:
-    """视频画面在成片里的位置 ((x, y, w, h), 是否贴在幻灯片上)。
-    原位置 = 幻灯片上视频框对应的地方；全屏（或者没有位置信息、没有幻灯片底图）= 按比例放到最大、居中。"""
+    """Where the video goes in the frame ((x, y, w, h), whether it sits on the slide).
+    In place = the video's box on the slide; full screen (or no position / no slide image) = scaled as large as possible, centered."""
     if clip.mode == "inset" and clip.rect and has_slide and draw_box:
         x0, y0, x1, y1 = draw_box
         r = clip.rect
@@ -343,8 +343,8 @@ def placement(clip: VideoClip, draw_box: Optional[Tuple[int, int, int, int]], ha
 def frames(src: Path, clip: VideoClip, base: Image.Image, box: Tuple[int, int, int, int], fps: int,
            n: int, text_at: Callable[[float], str],
            draw: Callable[[Image.Image, str], Image.Image]) -> Iterator[bytes]:
-    """逐帧产出 rgb24：ffmpeg 解码出视频画面，贴到 base（幻灯片页面或黑底）上，再画字幕。
-    视频比这一步短（比如静音后配的解说更长）就停在最后一帧。"""
+    """Yield rgb24 frames: ffmpeg decodes the video, which is placed on base (the slide or black), then the subtitle is drawn.
+    If the video is shorter than the step (e.g. a longer narration after muting), the last frame is held."""
     x, y, w, h = box
     start, _end = clip_range(clip)
     cmd = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-ss", f"{start:.3f}", "-i", str(src),
@@ -367,7 +367,7 @@ def frames(src: Path, clip: VideoClip, base: Image.Image, box: Tuple[int, int, i
                 else:
                     ended = True
             if ended and frozen_buf is not None and text == frozen_text:
-                yield frozen_buf                     # 视频放完了、字幕也没变：画面一样，直接复用
+                yield frozen_buf                     # the video has ended and the subtitle hasn't changed: identical frame, reuse it
                 continue
             img = base.copy()
             if last is not None:
@@ -379,7 +379,7 @@ def frames(src: Path, clip: VideoClip, base: Image.Image, box: Tuple[int, int, i
                 frozen_text, frozen_buf = text, buf
             yield buf
     finally:
-        # 用户点了停止、或者这一段编码出错时，解码的 ffmpeg 也要跟着结束，不留进程
+        # when the user clicks Stop or this segment's encode fails, the decoding ffmpeg must end too — no leftover processes
         try:
             proc.kill()
         except Exception:
@@ -392,7 +392,7 @@ def frames(src: Path, clip: VideoClip, base: Image.Image, box: Tuple[int, int, i
 
 
 def grab_frame(src: Path, t: float, w: int, h: int) -> Optional[Image.Image]:
-    """取 t 秒处的一帧（编辑器预览用），缩放到 w×h。"""
+    """Grab the frame at t seconds (editor preview), scaled to w×h."""
     proc = subprocess.run(
         [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.0, t):.3f}", "-i", str(src),
          "-frames:v", "1", "-vf", f"scale={w}:{h}", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1"],

@@ -1,5 +1,5 @@
-"""解说语言 / 第二字幕的语言列表：顺序和分组、每种都有音色和试听句、语音识别的语言代码、
-备注语言判断（后端 langdetect 和编辑器 app.js 的 guessLang 必须判断得一样）。不联网，不花额度。"""
+"""Narration / second-subtitle language list: order and groups, a voice and preview sentence for each, speech recognition language codes,
+notes-language detection (the backend's langdetect and guessLang in the editor's app.js must agree). Offline, no credits spent."""
 import json
 import os
 import shutil
@@ -107,7 +107,7 @@ if not node:
     print("  （没装 node，跳过和 app.js 的对比）")
 else:
     js = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-    block = js[js.index("// 粗判文字语言"):js.index("/** 一批备注大多是什么语言 */")]
+    block = js[js.index("// Rough language detection"):js.index("/** The language most notes in a set are written in */")]
     bases = sorted({k.split("-")[0] for k in codes} | {"cyrl"})
     extra = {"short": "OK", "mixed_ja": "新製品の説明資料をご覧ください。今日は新しい機能を紹介します。",
              "no_marks": "Мама мила раму, папа читал книгу дома вечером"}

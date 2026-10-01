@@ -1,4 +1,4 @@
-"""这轮检查修的问题：台词和解说不同步、片头换音色、全局音色不改问答项目、AI 改写不带备注、商用配音的重试 / 解析 / 音色表缓存。"""
+"""Fixes from this review: lines and narration out of sync, intro voice after a voice change, global voice not changing Q&A projects, AI rewrite without notes, retries / parsing / voice-list cache of paid voice services."""
 import base64
 import io
 import json
@@ -122,7 +122,7 @@ tts.synth_project(storage.load(p.id))
 check("主持人换了音色：片头用新音色重新合成", "zh-CN-XiaoyiNeural" in USED and n1 >= 1, USED)
 side = storage.audio_dir(p.id) / "__intro__.txt"
 check("片头记下了用的音色", json.loads(side.read_text(encoding="utf-8"))["voice"] == "zh-CN-XiaoyiNeural")
-side.write_text("欢迎。", encoding="utf-8")         # 上个版本的格式：只有文案
+side.write_text("欢迎。", encoding="utf-8")         # format of the previous version: only the text
 check("老格式的记录照样认", tts.card_audio(storage.audio_dir(p.id), "intro", "欢迎。", "zh-CN-XiaoyiNeural") is not None)
 
 print("\n== 3. 全局默认音色不改问答项目；改语言时讲者跟着换 ==")

@@ -1,4 +1,4 @@
-"""PPT 备注作解说。"""
+"""PPT speaker notes as narration."""
 import copy
 import json
 import os
@@ -22,7 +22,7 @@ from pptx.util import Inches, Pt  # noqa: E402
 from backend import main, storage  # noqa: E402
 from backend.services import script_gen, slides, tts  # noqa: E402
 
-slides.powerpoint_available = lambda: False      # 不去碰你正开着的 PowerPoint
+slides.powerpoint_available = lambda: False      # never touch the PowerPoint you have open
 tts.synth = lambda text, voice, out, *a, **k: (out.write_bytes(b"\0" * 2048), (1.0, []))[1]
 
 c = TestClient(main.app, base_url="http://127.0.0.1:8756", headers={"Origin": "http://127.0.0.1:8756"})
@@ -61,7 +61,7 @@ def wait(j):
         time.sleep(0.2)
 
 
-# ---------------------------------------------------------------- 造一份 PPT
+# ---------------------------------------------------------------- build a deck
 NOTES = {1: "欢迎来到销售对话培训，这是我们认为标准的开场讲解。",
          2: "第二页，先确认客户需求，再介绍产品。\n注意语气要自然。",
          4: "第四页的备注写在普通文本框里，不在标准占位符中。"}
@@ -76,8 +76,8 @@ for i in range(1, 5):
     if i == 4:
         ns = s.notes_slide
         body = ns.notes_placeholder
-        body._element.getparent().remove(body._element)          # 去掉标准备注占位符
-        # 备注页不支持直接加文本框：先在幻灯片上建一个，再把它的 XML 挪到备注页里
+        body._element.getparent().remove(body._element)          # remove the standard notes placeholder
+        # notes pages can't take a text box directly: create one on the slide, then move its XML to the notes page
         tb = s.shapes.add_textbox(Inches(1), Inches(5), Inches(6), Inches(2))
         tb.text_frame.text = NOTES[4]
         el = tb._element

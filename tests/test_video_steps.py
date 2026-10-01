@@ -1,4 +1,4 @@
-"""PPT 里的视频：导入 -> 视频步骤 -> 渲染。在临时目录里做，不碰用户项目，也不调用本机 PowerPoint。"""
+"""Videos in PPT decks: import -> video steps -> rendering. Runs in a temp folder, never touches the user's projects or calls the local PowerPoint."""
 import os, shutil, subprocess, sys, time
 from pathlib import Path
 
@@ -99,7 +99,7 @@ intro_len = total - t - (2.6 if p["outro"] else 0)
 v0 = intro_len + starts[vstep["id"]]
 check("成片总长对得上", abs(total - (intro_len + t + (2.6 if p["outro"] else 0))) < 0.5, f"{total:.1f}s")
 a = frame(mp4, v0 + 2.0, SP / "vs_a.png"); b = frame(mp4, v0 + 6.0, SP / "vs_b.png")
-# 视频框在画面里的位置（和渲染时同样的换算）：只比较这块区域，其余部分应该不变
+# the video box's position in the frame (same conversion as when rendering): compare only this area; the rest should not change
 from backend.services.renderer import StepRenderer, Theme
 th = Theme.from_config({**config.load(), **p["settings"], "video_width": 1280, "video_height": 720})
 from backend.models import Step
@@ -114,7 +114,7 @@ def mean_diff(r):
     return sum(ImageStat.Stat(ImageChops.difference(a.crop(r), b.crop(r))).mean) / 3
 outside = (0, 0, 1280, max(0, y - 10))
 d_in, d_out = mean_diff(inner), mean_diff(outside)
-# 视频编码有轻微噪点，只看平均差异：框里明显在变，框外几乎不变
+# video encoding adds slight noise, so only look at the mean difference: clearly changing inside the box, almost unchanged outside
 check("视频框里的画面在动", d_in > 3 and d_in > d_out * 20 and inset, f"平均差 {d_in:.1f}，框 {box}")
 check("视频框外面（幻灯片）不动", d_out < 1.5, f"平均差 {d_out:.2f}")
 ls = loud(mp4, v0 + 1, v0 + 9)

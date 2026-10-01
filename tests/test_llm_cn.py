@@ -1,4 +1,4 @@
-"""国内大模型（豆包、通义、GLM、MiniMax）：地址、默认模型、关思考的参数、<think> 去掉、不认的参数自动去掉（不联网）。"""
+"""Chinese LLM providers (Doubao, Qwen, GLM, MiniMax): endpoints, default models, thinking switches, <think> removal, unsupported parameters dropped automatically (offline)."""
 import json
 import os
 import shutil

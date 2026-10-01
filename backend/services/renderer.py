@@ -1,8 +1,8 @@
-"""画面合成：把截图 + 高亮 + 光标 + 标题渲染成视频帧（Pillow）。
+"""Frame composition: renders screenshot + highlight + cursor + titles into video frames (Pillow).
 
-设计：
-  stage  = 背景 + 浏览器外框 + 截图 + 遮罩变暗（静态，一步只算一次）
-  frame  = stage 按缓动缩放裁剪 -> 叠加高亮框 / 点击涟漪 / 鼠标指针 / 标题角标
+Design:
+  stage  = background + browser frame + screenshot + dimming mask (static, computed once per step)
+  frame  = stage cropped / zoomed with easing -> highlight box / click ripple / cursor / title badge on top
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .textlayout import (RAQM, clusters, font_path_for, is_complex, layout_font_
                          strip_trailing_punct)
 
 
-# ---- 工具 ----------------------------------------------------------------
+# ---- helpers -------------------------------------------------------------
 
 def hex_rgb(color: str, default=(14, 17, 22)) -> Tuple[int, int, int]:
     try:
@@ -49,12 +49,12 @@ def lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
 
-# 字体按线程分开缓存：并行渲染时多个线程同时用同一个 FreeTypeFont 会画花甚至崩溃
+# Fonts are cached per thread: several threads using the same FreeTypeFont at once garble glyphs or even crash
 _fonts = threading.local()
 
 
 def load_font(size: int, bold: bool = False, text: str = "") -> ImageFont.FreeTypeFont:
-    """text 给了就挑一个有这些字的字体（阿拉伯文、韩文、印地文……微软雅黑里没有）。"""
+    """If text is given, pick a font that has all its characters (Arabic, Korean, Hindi … are missing from Microsoft YaHei)."""
     cache: Dict[Tuple[str, int], ImageFont.FreeTypeFont] = getattr(_fonts, "cache", None)
     if cache is None:
         cache = _fonts.cache = {}
@@ -85,12 +85,12 @@ def is_cjk_char(ch: str) -> bool:
 
 
 def _use_gdi(font, text: str) -> bool:
-    """阿拉伯文、希伯来文、印地文、泰文等交给 Windows 的排版引擎（见 gdi_text）。"""
+    """Arabic, Hebrew, Hindi, Thai etc. are laid out by Windows' text engine (see gdi_text)."""
     return gdi_text.AVAILABLE and not RAQM and is_complex(text) and bool(getattr(font, "path", None))
 
 
 def text_width(font, text: str) -> float:
-    """画出来的宽度（阿拉伯文要按连写之后的字形量）。"""
+    """Rendered width (Arabic is measured after contextual shaping)."""
     if _use_gdi(font, text):
         w = gdi_text.measure(text, font.path, font.size)
         if w is not None:
@@ -111,7 +111,7 @@ def _with_alpha(mask: Image.Image, color) -> Image.Image:
 
 def draw_text(d: ImageDraw.ImageDraw, xy, text: str, font, fill, anchor: str = "la",
               stroke_width: int = 0, stroke_fill=None) -> None:
-    """画一段文字。复杂文字用 Windows 排版引擎画成遮罩再上色，其余照旧用 Pillow。"""
+    """Draw a piece of text. Complex scripts are rendered as a mask by the Windows engine and then colored; everything else uses Pillow."""
     if _use_gdi(font, text):
         res = gdi_text.render(text, font.path, font.size)
         if res is not None:
@@ -131,9 +131,9 @@ def draw_text(d: ImageDraw.ImageDraw, xy, text: str, font, fill, anchor: str = "
 
 
 def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> List[str]:
-    """按像素宽度折行：中日韩逐字断行，西文回退到最近的空格，不劈开单词。
+    """Wrap by pixel width: CJK breaks between characters, Western text falls back to the last space and never splits words.
 
-    返回逻辑顺序的行，画之前再用 shape() 转成显示顺序。字幕每一帧都要画同一句，所以结果缓存。
+    Returns lines in logical order; shape() converts them to display order before drawing. Subtitles draw the same sentence every frame, so the result is cached.
     """
     if not text:
         return []
@@ -144,7 +144,7 @@ def wrap_text(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> Lis
 def _wrap(text: str, font, max_width: int) -> Tuple[str, ...]:
     lines: List[str] = []
     cur = ""
-    # 按「字 + 附在上面的符号」走：泰文声调、印地文元音符号不会和前面的字母拆到两行
+    # Walk by "character + attached marks": Thai tone marks and Hindi vowel signs never end up on a different line than their letter
     for ch in clusters(text):
         if ch == "\n":
             lines.append(cur)
@@ -154,7 +154,7 @@ def _wrap(text: str, font, max_width: int) -> Tuple[str, ...]:
         if cur and text_width(font, trial) > max_width:
             sp = cur.rfind(" ")
             word = cur[sp + 1:]
-            # 行尾这一串是西文单词的一部分 -> 整个单词挪到下一行
+            # the tail of the line is part of a Western word -> move the whole word to the next line
             if sp > 0 and ch != " " and word and not any(is_cjk_char(c) for c in word):
                 lines.append(cur[:sp])
                 cur = word + ch
@@ -169,9 +169,9 @@ def _wrap(text: str, font, max_width: int) -> Tuple[str, ...]:
 
 
 def apply_redactions(img: Image.Image, redactions, ratio: float = 1.0) -> Image.Image:
-    """把打码区域直接烧进截图。坐标是 CSS 像素，ratio 是 devicePixelRatio。
+    """Burn the redaction boxes into the screenshot. Coordinates are CSS pixels; ratio is devicePixelRatio.
 
-    模糊/像素化都先降采样再放大（马赛克），信息是真的被丢掉了，不是盖一层。
+    Blur and pixelate both down-sample and scale back up (mosaic), so the information is really discarded, not just covered.
     """
     if not redactions or img is None:
         return img
@@ -208,7 +208,7 @@ def rounded_shadow(size: Tuple[int, int], box: Tuple[int, int, int, int],
     return layer.filter(ImageFilter.GaussianBlur(blur))
 
 
-# ---- 主题 ----------------------------------------------------------------
+# ---- theme ---------------------------------------------------------------
 
 @dataclass
 class Theme:
@@ -224,8 +224,8 @@ class Theme:
     browser_frame: bool = True
     blur_backdrop: bool = True
     subtitles: bool = True
-    slide_reveal: bool = False        # 幻灯片逐条出现 + 突出当前（项目设置 slides_reveal）
-    sub_space: bool = True            # 给第二语言字幕留位置：主字幕底边在 93.5%，第二字幕紧贴在它下面
+    slide_reveal: bool = False        # slides: reveal points one by one + highlight the current one (project setting slides_reveal)
+    sub_space: bool = True            # leave room for second-language subtitles: main subtitle bottom at 93.5%, the second one right below it
 
     @classmethod
     def from_config(cls, overrides: Optional[dict] = None) -> "Theme":
@@ -249,13 +249,13 @@ class Theme:
         )
 
 
-# ---- 单步渲染器 -----------------------------------------------------------
+# ---- per-step renderer ---------------------------------------------------
 
 class StepRenderer:
-    """一个步骤 = 一个 StepRenderer，负责产出这一步的所有帧。"""
+    """One step = one StepRenderer, which produces all frames of that step."""
 
-    CURSOR_MOVE = 0.55        # 指针飞向目标用时
-    RIPPLE_DUR = 0.9          # 点击涟漪持续时间
+    CURSOR_MOVE = 0.55        # time for the cursor to fly to the target
+    RIPPLE_DUR = 0.9          # click ripple duration
 
     def __init__(self, step: Step, screenshot_path: Path, theme: Theme,
                  total_steps: int = 0, prev_point: Optional[Tuple[float, float]] = None,
@@ -264,23 +264,23 @@ class StepRenderer:
         self.step = step
         self.theme = theme
         self.total_steps = total_steps
-        self.step_no = step_no or step.index + 1     # 在成片里是第几步（排除掉的步骤不算）
-        self.speech_offset = speech_offset            # 配音从这一步的第几秒开始（翻页后停一拍再开口）
-        self.prev_frame = prev_frame                  # 上一页最后的画面：翻页时从它淡过来，不闪黑
+        self.step_no = step_no or step.index + 1     # step number in the final video (excluded steps don't count)
+        self.speech_offset = speech_offset            # second at which the voice-over starts in this step (a short pause after a slide change)
+        self.prev_frame = prev_frame                  # last frame of the previous slide: cross-fade from it instead of flashing black
         self.duration = max(0.8, duration)
         self.W, self.H = theme.width, theme.height
-        self.is_slide = step.kind in ("slide", "video")      # 视频步骤的底图就是它所在的那页幻灯片
+        self.is_slide = step.kind in ("slide", "video")      # a video step uses its slide as the base image
 
         self.shot = self._load(screenshot_path)
-        # 打码在最前面做：后面的缩放、模糊背景、放大镜头都基于已脱敏的图
+        # Redact first: zooming, the blurred background and close-ups are all based on the redacted image
         if self.shot is not None and step.redactions:
             self.shot = apply_redactions(self.shot, step.redactions, self._img_ratio())
-        self.draw_box = self._layout()                       # 截图在画布上的位置
-        self.target = self._target_rect()                    # 高亮框（画布坐标）
-        self.point = self._click_point()                     # 点击点（画布坐标）
+        self.draw_box = self._layout()                       # screenshot position on the canvas
+        self.target = self._target_rect()                    # highlight box (canvas coordinates)
+        self.point = self._click_point()                     # click point (canvas coordinates)
         self.prev_point = prev_point or (self.W * 0.5, self.H * 0.92)
         self.stage = self._build_stage()
-        # 幻灯片逐条出现：打了码的页不用（条目图是没打码的原图），数据坏了也退回整页一起出现
+        # Slide reveal: not on redacted slides (the item images are unredacted originals); broken data falls back to the whole slide at once
         self.reveal = None
         if (self.is_slide and step.kind == "slide" and theme.slide_reveal and step.reveal is not None
                 and step.reveal.enabled and not step.redactions and self.shot is not None):
@@ -293,18 +293,18 @@ class StepRenderer:
     @classmethod
     def click_point(cls, step: Step, screenshot_path: Path,
                     theme: "Theme") -> Optional[Tuple[float, float]]:
-        """只算这一步的点击点，不解码整张截图（Image.open 只读文件头）。
+        """Compute only this step's click point without decoding the screenshot (Image.open reads only the header).
 
-        并行渲染前要先把每一步的光标起点串起来（上一步点在哪，这一步光标就从哪飞过来），
-        用它就不必先把所有步骤的底图都建出来、占掉几百 MB 内存。
+        Before parallel rendering the cursor start points are chained (the cursor flies in from where the previous step clicked);
+        this avoids building every step's base image first, which would take hundreds of MB of memory.
         """
         self = cls.__new__(cls)
         self.step, self.theme = step, theme
         self.W, self.H = theme.width, theme.height
-        self.is_slide = step.kind in ("slide", "video")      # 视频步骤的底图就是它所在的那页幻灯片
+        self.is_slide = step.kind in ("slide", "video")      # a video step uses its slide as the base image
         try:
             with Image.open(screenshot_path) as im:
-                # 只要尺寸：读完文件头就关掉，不然每一步都占着一个文件句柄（Windows 上删不掉项目）
+                # only the size is needed: close the file after reading the header, otherwise every step keeps a handle open (the project can't be deleted on Windows)
                 self.shot = SimpleNamespace(size=im.size)
         except Exception:
             self.shot = None
@@ -313,15 +313,15 @@ class StepRenderer:
         return self._click_point()
 
     def still_after(self) -> float:
-        """这个时间点之后画面不再变化（秒）；-1 表示一直在动。
+        """After this time (seconds) the frame no longer changes; -1 means it keeps moving.
 
-        幻灯片只有开头一小段翻页淡入，之后每一帧都一模一样，可以直接复用上一帧，
-        省掉大量重复绘制。录屏步骤有光标、高亮呼吸等一直在动的元素。
+        Slides only have a short fade-in at the start; after that every frame is identical and the previous frame can be reused,
+        saving lots of drawing. Recorded steps have elements that keep moving (cursor, breathing highlight).
         """
         return 0.35 if self.is_slide else -1.0
 
     def frame_key(self, t: float):
-        """画面静止时返回一个标识：标识相同的两帧一模一样，可以直接复用上一帧；画面在动就返回 None。"""
+        """While the frame is static, return a key: two frames with the same key are identical and the previous one can be reused; None while moving."""
         if not self.is_slide or t < 0.35:
             return None
         if self.reveal is not None:
@@ -329,12 +329,12 @@ class StepRenderer:
         return "static"
 
     def final_frame(self) -> Image.Image:
-        """这一步最后的完整画面（编辑器预览用）：逐条出现的页显示全部条目。"""
+        """The final full frame of this step (editor preview): slides with reveal show all items."""
         if self.reveal is not None:
             return self.reveal.compose(0.0, final=True)
         return self.stage.copy()
 
-    # -- 资源 --
+    # -- resources --
     def _load(self, path: Path) -> Optional[Image.Image]:
         try:
             with Image.open(path) as im:
@@ -342,14 +342,14 @@ class StepRenderer:
         except Exception:
             return None
 
-    # -- 布局 --
+    # -- layout --
     def _layout(self) -> Tuple[int, int, int, int]:
-        """截图绘制区域 (x0,y0,x1,y1)。"""
+        """Screenshot drawing area (x0, y0, x1, y1)."""
         th = self.theme
         if self.is_slide:
-            pad = int(self.H * 0.035)            # 左右
-            top = int(self.H * 0.012)            # 幻灯片上面没有别的东西，离画面顶边留一点就够
-            # 字幕放在页面下方，不压内容（一行主字幕底框高 5.5%，顶边正好在幻灯片下沿下面一点）
+            pad = int(self.H * 0.035)            # left / right
+            top = int(self.H * 0.012)            # nothing sits above a slide, so a small margin to the top edge is enough
+            # subtitles go below the page and never cover it (a one-line subtitle box is 5.5% high; its top is just below the slide)
             bottom = int(self.H * (0.125 if th.sub_space else 0.105)) if th.subtitles else top
             avail_w, avail_h = self.W - pad * 2, self.H - top - bottom
             if not self.shot:
@@ -362,7 +362,7 @@ class StepRenderer:
             return (x0, y0, x0 + w, y0 + h)
         pad_x = int(self.W * 0.035)
         pad_top = int(self.H * 0.075)
-        pad_bottom = int(self.H * 0.085)      # 给字幕留位置
+        pad_bottom = int(self.H * 0.085)      # room for subtitles
         avail_w = self.W - pad_x * 2
         avail_h = self.H - pad_top - pad_bottom
         bar = int(self.H * 0.035) if th.browser_frame else 0
@@ -377,14 +377,14 @@ class StepRenderer:
         return (x0, y0, x0 + w, y0 + h)
 
     def _img_ratio(self) -> float:
-        """CSS 像素 -> 截图像素 的比例（devicePixelRatio）。"""
+        """Ratio CSS pixels -> screenshot pixels (devicePixelRatio)."""
         s = self.step
         if s.viewport_w and s.img_w:
             return s.img_w / s.viewport_w
         return 1.0
 
     def _to_canvas(self, x: float, y: float) -> Tuple[float, float]:
-        """截图内坐标（CSS 像素）-> 画布坐标。"""
+        """Screenshot coordinates (CSS pixels) -> canvas coordinates."""
         x0, y0, x1, y1 = self.draw_box
         if not self.shot:
             return (x0 + x, y0 + y)
@@ -403,7 +403,7 @@ class StepRenderer:
         ax, ay = self._to_canvas(r.x, r.y)
         bx, by = self._to_canvas(r.x + r.w, r.y + r.h)
         x0, y0, x1, y1 = self.draw_box
-        # 限制在截图范围内，并给极小元素一个最小尺寸
+        # keep it inside the screenshot and give tiny elements a minimum size
         ax, bx = max(x0, ax), min(x1, bx)
         ay, by = max(y0, ay), min(y1, by)
         if bx - ax < 16:
@@ -425,7 +425,7 @@ class StepRenderer:
             return ((x0 + x1) / 2, (y0 + y1) / 2)
         return None
 
-    # -- 静态底图 --
+    # -- static base image --
     def _build_stage(self) -> Image.Image:
         th = self.theme
         canvas = Image.new("RGB", (self.W, self.H), th.bg)
@@ -443,7 +443,7 @@ class StepRenderer:
                 canvas.paste(page, (x0, y0), mask)
             return canvas
 
-        # 背景：截图放大模糊，营造氛围
+        # background: the screenshot enlarged and blurred, for atmosphere
         if self.shot and th.blur_backdrop:
             try:
                 bw, bh = self.shot.size
@@ -461,12 +461,12 @@ class StepRenderer:
         radius = max(8, int(self.H * 0.012))
         bar_h = int(self.H * 0.035) if th.browser_frame else 0
 
-        # 投影
+        # drop shadow
         shadow_box = (x0 - 6, y0 - bar_h - 6, x1 + 6, y1 + 14)
         sh = rounded_shadow((self.W, self.H), shadow_box, radius + 6, int(self.H * 0.022), 170)
         canvas.paste(Image.new("RGB", (self.W, self.H), (0, 0, 0)), (0, 0), sh)
 
-        # 浏览器外框
+        # browser frame
         if th.browser_frame:
             frame = Image.new("RGB", (self.W, self.H))
             fd = ImageDraw.Draw(frame)
@@ -481,7 +481,7 @@ class StepRenderer:
                 cx = x0 + bar_h * (0.7 + i * 0.55)
                 r = bar_h * 0.16
                 d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=col)
-            # 地址栏
+            # address bar
             pill_x0 = x0 + bar_h * 2.6
             pill_x1 = min(x1 - bar_h * 0.6, pill_x0 + (x1 - x0) * 0.55)
             ph = bar_h * 0.56
@@ -497,7 +497,7 @@ class StepRenderer:
                     tw = text_width(f, url)
                 draw_text(d, (pill_x0 + 14, cy), url, f, (150, 158, 170), anchor="lm")
 
-        # 截图（圆角）
+        # screenshot (rounded corners)
         if self.shot:
             shot = self.shot.resize((x1 - x0, y1 - y0), Image.LANCZOS)
             mask = Image.new("L", (x1 - x0, y1 - y0), 0)
@@ -506,7 +506,7 @@ class StepRenderer:
             md.rounded_rectangle((0, 0, x1 - x0 - 1, y1 - y0 - 1), radius=r2, fill=255)
             canvas.paste(shot, (x0, y0), mask)
 
-        # 变暗遮罩（高亮区域挖空）
+        # dimming mask (with the highlight area cut out)
         if th.dim and self.target:
             overlay = Image.new("L", (self.W, self.H), 0)
             od = ImageDraw.Draw(overlay)
@@ -520,15 +520,15 @@ class StepRenderer:
 
         return canvas
 
-    # -- 缩放变换 --
+    # -- zoom --
     def _zoom_at(self, t: float) -> Tuple[float, float, float]:
-        """返回 (scale, crop_x0, crop_y0)。"""
+        """Returns (scale, crop_x0, crop_y0)."""
         th = self.theme
         if self.is_slide:
-            return (1.0, 0.0, 0.0)          # 幻灯片不推镜
+            return (1.0, 0.0, 0.0)          # no camera moves on slides
         if not (th.zoom and self.step.zoom and self.target):
             return (1.0, 0.0, 0.0)
-        # 目标越小放得越大，但不超过 zoom_factor 上限
+        # the smaller the target, the closer the zoom, capped at zoom_factor
         tx0, ty0, tx1, ty1 = self.target
         tw, thh = tx1 - tx0, ty1 - ty0
         want = min(self.W / max(tw * 3.2, 1), self.H / max(thh * 3.2, 1))
@@ -555,7 +555,7 @@ class StepRenderer:
         cy = lerp(self.H / 2, (ty0 + ty1) / 2, k)
         x0 = cx - cw / 2
         y0 = cy - ch / 2
-        # 优先把取景框限制在截图内部，避免画面边缘露出背景
+        # prefer keeping the view inside the screenshot so the background doesn't show at the edges
         bx0, by0, bx1, by1 = self.draw_box
         if cw <= bx1 - bx0:
             x0 = min(max(x0, bx0), bx1 - cw)
@@ -569,11 +569,11 @@ class StepRenderer:
     def _tx(pt: Tuple[float, float], s: float, ox: float, oy: float) -> Tuple[float, float]:
         return ((pt[0] - ox) * s, (pt[1] - oy) * s)
 
-    # -- 每帧 --
+    # -- per frame --
     def frame(self, t: float) -> Image.Image:
         if self.is_slide:
             img = self.reveal.compose(t) if self.reveal is not None else self.stage.copy()
-            if t < 0.35:   # 翻页：上一页也是幻灯片就交叉淡入淡出，否则从背景色淡入
+            if t < 0.35:   # slide change: cross-fade if the previous step is also a slide, otherwise fade in from the background color
                 k = ease_out_cubic(t / 0.35)
                 if self.prev_frame is not None and self.prev_frame.size == img.size:
                     img = Image.blend(self.prev_frame, img, k)
@@ -590,7 +590,7 @@ class StepRenderer:
             img = self.stage.copy()
             s, ox, oy = 1.0, 0.0, 0.0
 
-        # 直接在 RGB 图上用 RGBA 模式绘制，比逐层 alpha_composite 快很多
+        # draw RGBA directly onto the RGB image; much faster than alpha_composite layer by layer
         d = ImageDraw.Draw(img, "RGBA")
         self._draw_highlight(d, t, s, ox, oy)
         self._draw_ripple(d, t, s, ox, oy)
@@ -600,7 +600,7 @@ class StepRenderer:
             self._draw_cursor(d, t, s, ox, oy)
         return img
 
-    # -- 元素 --
+    # -- elements --
     def _draw_highlight(self, d: ImageDraw.ImageDraw, t: float, s: float, ox: float, oy: float):
         if not self.target:
             return
@@ -618,7 +618,7 @@ class StepRenderer:
         r = max(6, int(self.H * 0.010 * s))
         a = int(255 * min(1.0, k))
         col = self.theme.accent
-        # 外发光
+        # outer glow
         d.rounded_rectangle(
             (box[0] - w, box[1] - w, box[2] + w, box[3] + w),
             radius=r + w, outline=col + (int(a * 0.28),), width=max(2, w * 2),
@@ -644,7 +644,7 @@ class StepRenderer:
                 continue
             d.ellipse((cx - rr, cy - rr, cx + rr, cy + rr),
                       outline=self.theme.accent + (a,), width=max(2, int(self.H * 0.0035)))
-        # 中心点
+        # center dot
         a0 = int(230 * (1 - ease_out_cubic(min(1.0, k * 1.6))))
         if a0 > 5:
             rr = base * 0.45
@@ -694,7 +694,7 @@ class StepRenderer:
                 title = title[:-2] + "…"
             title_w = text_width(f_title, title)
 
-        # 深色底托，保证叠在网页内容上也读得清
+        # dark backing so it stays readable on top of web content
         bh = self.H * 0.058
         total_w = badge_w + (self.H * 0.018 + title_w if title else 0)
         if total_w > 0:
@@ -712,7 +712,7 @@ class StepRenderer:
             draw_text(d, (x, y), title, f_title, (255, 255, 255, a), anchor="lm")
 
     def _draw_value_bubble(self, d: ImageDraw.ImageDraw, t: float, s: float, ox: float, oy: float):
-        """输入类步骤：在输入框旁边显示键入的内容。"""
+        """Input steps: show the typed text next to the input field."""
         st = self.step
         if st.kind != "input" or not st.value or not self.target:
             return
@@ -736,16 +736,16 @@ class StepRenderer:
         draw_text(d, (bx + bw / 2, by + bh / 2), txt, f, (240, 244, 250, a), anchor="mm")
 
 
-# ---- 字幕（直接画进帧里，不依赖 ffmpeg 的 libass） -------------------------
+# ---- subtitles (drawn into the frames, independent of ffmpeg's libass) ----
 
 def sub_bottom(theme: Theme) -> float:
-    """主字幕底边在画面高度的多少处。给第二语言字幕留位置时 93.5%：下面的 6.5% 放一行第二字幕（外挂，
-    紧贴在主字幕下面）；不留时 95.5%。两种都比早先的 94.5% / 90.5% 往下，幻灯片能显示得更大。"""
+    """Where the main subtitle's bottom edge sits, as a fraction of the frame height. 93.5% when leaving room for a second-language subtitle
+    (the 6.5% below hold one line of the external second subtitle, right under the main one); 95.5% otherwise. Both are lower than the earlier 94.5% / 90.5%, so slides can be larger."""
     return 0.935 if theme.sub_space else 0.955
 
 
 def draw_subtitle(img: Image.Image, text: str, theme: Theme) -> Image.Image:
-    """在画面底部绘制一条字幕。"""
+    """Draw one subtitle at the bottom of the frame."""
     if not text:
         return img
     W, H = theme.width, theme.height
@@ -755,8 +755,8 @@ def draw_subtitle(img: Image.Image, text: str, theme: Theme) -> Image.Image:
     lines = wrap_text(d, text, f, int(W * 0.76))[:3]
     if not lines:
         return img
-    # 底框贴着文字：上下只留一点边（以前上下各 1.6%，一行字的底框高 7.7%，现在 5.5%），
-    # 文字离底框下沿近了，第二语言字幕也就离主字幕近了
+    # The box hugs the text: only a small margin above and below (it used to be 1.6% each, 7.7% for one line; now 5.5%),
+    # so the text is closer to the box's bottom edge and the second-language subtitle closer to the main one
     line_h = int(H * 0.050)
     pad_x = int(H * 0.018)
     pad_y = int(H * 0.007)
@@ -775,13 +775,13 @@ def draw_subtitle(img: Image.Image, text: str, theme: Theme) -> Image.Image:
     return img
 
 
-# ---- 片头 / 片尾卡 --------------------------------------------------------
+# ---- intro / outro cards -------------------------------------------------
 
 _card_bg_cache: Dict[Tuple[int, int, Tuple[int, int, int], Tuple[int, int, int]], Image.Image] = {}
 
 
 def _card_background(theme: Theme) -> Image.Image:
-    """片头背景（含高斯模糊光晕）只算一次，后面每帧复用。"""
+    """The intro background (with Gaussian-blurred glow) is computed once and reused for every frame."""
     key = (theme.width, theme.height, theme.bg, theme.accent)
     if key in _card_bg_cache:
         return _card_bg_cache[key]
@@ -801,11 +801,11 @@ _card_img_cache: Dict[tuple, Image.Image] = {}
 
 
 def _card_image_background(theme: Theme, path: Path, fit: str, band: bool) -> Image.Image:
-    """用户上传的片头 / 片尾背景铺满画面。片头每一帧都一样，算一次缓存起来。
+    """Fill the frame with the user's intro / outro background. Every intro frame is identical, so it is computed once and cached.
 
-    fit=contain：整张完整显示，四周空出来的地方用同一张图放大模糊补齐（比纯色边框好看）；
-    fit=cover：铺满画面，多出来的裁掉。带透明通道的图（比如 logo）放在默认的渐变背景上。
-    band：要在上面叠字时，中间压一条柔和的暗带，亮色背景上的白字也看得清。
+    fit=contain: show the whole image and fill the empty space around it with an enlarged, blurred copy (nicer than solid bars);
+    fit=cover: fill the frame and crop the rest. Images with transparency (e.g. a logo) go on the default gradient background.
+    band: when text is overlaid, add a soft dark band in the middle so white text stays readable on bright backgrounds.
     """
     st = path.stat()
     key = (str(path), st.st_mtime_ns, theme.width, theme.height, theme.bg, theme.accent, fit, band)
@@ -845,16 +845,16 @@ def _card_image_background(theme: Theme, path: Path, fit: str, band: bool) -> Im
 def render_title_card(theme: Theme, title: str, subtitle: str = "",
                       t: float = 0.0, duration: float = 3.0, background: Optional[Path] = None,
                       show_text: bool = True, fit: str = "contain") -> Image.Image:
-    """片头卡。background 是用户自定义的背景图（图片或 PPT 的一页）；show_text=False 时只显示背景。"""
+    """Intro card. background is the user's custom background (an image or a slide); with show_text=False only the background is shown."""
     W, H = theme.width, theme.height
-    show_text = show_text or background is None          # 默认背景上没有字就什么都没有了
+    show_text = show_text or background is None          # the default background without text would be empty
     has_text = show_text and bool((title or "").strip() or (subtitle or "").strip())
     base = None
     if background is not None:
         try:
             base = _card_image_background(theme, background, fit, band=has_text)
         except Exception:
-            base = None                                   # 图坏了就用默认背景，不让整段渲染失败
+            base = None                                   # a broken image falls back to the default background instead of failing the render
     img = (base if base is not None else _card_background(theme)).copy()
     if not has_text:
         return img
@@ -875,7 +875,7 @@ def render_title_card(theme: Theme, title: str, subtitle: str = "",
     total_h = len(lines) * line_h + (H * 0.075 if subtitle else 0)
     y = H / 2 - total_h / 2 + rise
 
-    # 主色小横杠
+    # short accent bar
     d.rounded_rectangle((W * 0.5 - H * 0.05, y - H * 0.065, W * 0.5 + H * 0.05, y - H * 0.055),
                         radius=H * 0.005, fill=theme.accent + (a,))
     for ln in lines:
@@ -893,6 +893,6 @@ def render_title_card(theme: Theme, title: str, subtitle: str = "",
 def render_outro_card(theme: Theme, text: str, t: float = 0.0, duration: float = 3.0,
                       background: Optional[Path] = None, show_text: bool = True,
                       fit: str = "contain") -> Image.Image:
-    # 有自定义背景时没写片尾文字就只显示背景；默认背景上至少放个 ✓
+    # with a custom background and no outro text, show only the background; the default background gets at least a ✓
     return render_title_card(theme, text or ("" if background is not None else "✓"), "", t, duration,
                              background=background, show_text=show_text, fit=fit)

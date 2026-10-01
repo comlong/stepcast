@@ -1,6 +1,6 @@
-"""ffmpeg 定位与通用调用封装。
+"""Locating ffmpeg and common call wrappers.
 
-优先用系统 PATH 里的 ffmpeg；找不到就退回 imageio-ffmpeg 自带的二进制。
+ffmpeg from the system PATH is preferred; otherwise fall back to the binary bundled with imageio-ffmpeg.
 """
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def ffprobe_bin() -> Optional[str]:
     exe = shutil.which("ffprobe")
     if exe:
         return exe
-    # ffmpeg 同目录下常常有 ffprobe
+    # ffprobe is often in the same folder as ffmpeg
     try:
         p = Path(ffmpeg_bin()).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
         if p.exists():
@@ -52,7 +52,7 @@ def ffprobe_bin() -> Optional[str]:
 
 
 def run(args: List[str], check: bool = True, capture: bool = True) -> subprocess.CompletedProcess:
-    """执行 ffmpeg 命令（args 不含 ffmpeg 本身）。"""
+    """Run an ffmpeg command (args without ffmpeg itself)."""
     cmd = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-y"] + args
     proc = subprocess.run(
         cmd,
@@ -71,7 +71,7 @@ _DUR_RE = re.compile(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)")
 
 
 def audio_readable(path: str | Path) -> bool:
-    """音频文件能不能正常解码（只试解开头 1 秒）。"""
+    """Whether an audio file decodes properly (only the first second is tried)."""
     proc = subprocess.run([ffmpeg_bin(), "-hide_banner", "-nostdin", "-v", "error", "-i", str(path),
                            "-t", "1", "-f", "null", "-"],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
@@ -79,7 +79,7 @@ def audio_readable(path: str | Path) -> bool:
 
 
 def probe_duration(path: str | Path) -> float:
-    """返回媒体时长（秒），失败返回 0。"""
+    """Media duration in seconds; 0 on failure."""
     path = str(path)
     if not os.path.exists(path):
         return 0.0
@@ -97,7 +97,7 @@ def probe_duration(path: str | Path) -> float:
                 return float(txt)
         except Exception:
             pass
-    # 退回解析 ffmpeg 的 stderr
+    # fall back to parsing ffmpeg's stderr
     try:
         proc = subprocess.run(
             [ffmpeg_bin(), "-hide_banner", "-i", path],
@@ -114,12 +114,12 @@ def probe_duration(path: str | Path) -> float:
     return 0.0
 
 
-# ---- 编码器（显卡加速）----------------------------------------------------
-# 独显和 CPU 内置的核显都有专门的视频编码芯片。用它编码本身不一定比 CPU 快，
-# 但能把 CPU 让出来给画面渲染（真正的瓶颈），并行渲染时差别明显；笔记本还更省电。
+# ---- encoders (GPU acceleration) ----------------------------------------------------
+# Dedicated and integrated GPUs both have video encoding hardware. Encoding with it isn't necessarily faster than the CPU,
+# but it frees the CPU for drawing frames (the real bottleneck), which matters with parallel rendering; laptops also save power.
 HW_ENCODERS = {
     "nvenc": "h264_nvenc",      # NVIDIA
-    "qsv": "h264_qsv",          # Intel 核显 Quick Sync
+    "qsv": "h264_qsv",          # Intel integrated graphics Quick Sync
     "amf": "h264_amf",          # AMD
 }
 ENCODER_ARGS = {
@@ -132,7 +132,7 @@ ENCODER_ARGS = {
 
 @lru_cache(maxsize=1)
 def _bundled_ffmpeg() -> Optional[str]:
-    """imageio-ffmpeg 自带的那个 ffmpeg（打包版里就是它）。"""
+    """The ffmpeg bundled with imageio-ffmpeg (the one in the packaged app)."""
     try:
         import imageio_ffmpeg
         exe = imageio_ffmpeg.get_ffmpeg_exe()
@@ -142,10 +142,10 @@ def _bundled_ffmpeg() -> Optional[str]:
 
 
 def _ffmpeg_candidates() -> List[str]:
-    """显卡编码可以用的 ffmpeg：先用平时那个（系统装的优先），不行再试自带的。
+    """ffmpeg binaries usable for GPU encoding: the usual one first (system-installed preferred), then the bundled one.
 
-    系统装的 ffmpeg 可能比显卡驱动新：比如 ffmpeg 7.1.1 的 NVENC 要 NVIDIA 570 以上的驱动，
-    驱动是 560 时就用不了显卡编码；自带的那个要求低，照样能用。"""
+    A system ffmpeg may be newer than the GPU driver: e.g. NVENC in ffmpeg 7.1.1 needs NVIDIA driver 570 or later,
+    so with driver 560 GPU encoding fails; the bundled one has lower requirements and still works."""
     out = [ffmpeg_bin()]
     b = _bundled_ffmpeg()
     if b and os.path.normcase(os.path.abspath(b)) != os.path.normcase(os.path.abspath(out[0])):
@@ -180,11 +180,11 @@ def _try_encode(name: str, args: List[str], exe: Optional[str] = None) -> bool:
 
 @lru_cache(maxsize=8)
 def _probe(name: str) -> Optional[Tuple[str, Tuple[str, ...]]]:
-    """真的编一小段试试，返回 (用哪个 ffmpeg, 能用的参数)；这个编码器用不了就返回 None。
+    """Really encode a short clip; returns (which ffmpeg, working arguments), or None if this encoder can't be used.
 
-    显卡在支持列表里不代表能用（没装驱动、驱动太老、虚拟机里没有显卡……）。
-    画质参数的名字还跟驱动版本有关（AMD 的 AMF 尤其），所以带参数编不动时，
-    再用编码器自己的默认参数试一次 —— 总比白白退回 CPU 强。
+    Being in the supported list doesn't mean it works (no driver, an old driver, no GPU in a virtual machine …).
+    Quality parameter names also depend on the driver version (AMD's AMF in particular), so if encoding with parameters fails,
+    try once more with the encoder's own defaults — better than falling back to the CPU for nothing.
     """
     if name == "libx264":
         return ffmpeg_bin(), tuple(ENCODER_ARGS["libx264"])
@@ -207,14 +207,14 @@ def encoder_works(name: str) -> bool:
 
 
 def encoder_bin(name: str) -> str:
-    """用这个编码器时该调哪个 ffmpeg（见 _ffmpeg_candidates）。"""
+    """Which ffmpeg to call for this encoder (see _ffmpeg_candidates)."""
     p = _probe(name)
     return p[0] if p else ffmpeg_bin()
 
 
 @lru_cache(maxsize=4)
 def pick_encoder(pref: str = "auto") -> str:
-    """按设置挑编码器：auto 找一个能用的显卡编码器，找不到就用 CPU。"""
+    """Pick the encoder from the settings: auto finds a working GPU encoder, otherwise the CPU."""
     pref = (pref or "auto").strip().lower()
     if pref in ("cpu", "x264", "libx264", "software"):
         return "libx264"
@@ -229,7 +229,7 @@ def pick_encoder(pref: str = "auto") -> str:
 
 
 def encoder_args(name: str) -> List[str]:
-    """这个编码器实际能用的参数（探测时验证过的）。"""
+    """The arguments that actually work for this encoder (verified while probing)."""
     args = _probe_args(name)
     if args is None:
         return list(ENCODER_ARGS.get(name, ENCODER_ARGS["libx264"]))
@@ -240,7 +240,7 @@ _available_cache: dict = {"ts": 0.0, "value": None}
 
 
 def available() -> dict:
-    """ffmpeg 能不能用。结果缓存 60 秒：扩展弹窗开着时每 2 秒查一次健康状态，不必每次都起一个 ffmpeg 进程。"""
+    """Whether ffmpeg is usable. Cached for 60 seconds: with the extension popup open, health is checked every 2 seconds, no need to start ffmpeg each time."""
     now = time.time()
     if _available_cache["value"] is not None and now - _available_cache["ts"] < 60:
         return dict(_available_cache["value"])
@@ -257,7 +257,7 @@ def available() -> dict:
 
 
 def escape_filter_path(path: str | Path) -> str:
-    """Windows 路径放进 filter 参数（如 subtitles=）时需要转义。"""
+    """Windows paths need escaping inside filter arguments (e.g. subtitles=)."""
     p = str(path).replace("\\", "/")
     p = p.replace(":", "\\:")
     p = p.replace("'", "\\'")

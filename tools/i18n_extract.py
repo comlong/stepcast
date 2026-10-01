@@ -1,13 +1,13 @@
-"""界面翻译维护工具。
+"""Maintenance tool for interface translations.
 
-    python tools/i18n_extract.py            # 检查：漏包 t() 的中文、各语言缺的译文、占位符对不上
-    python tools/i18n_extract.py --keys keys.json   # 另外把所有 key（附出处文件）写到 keys.json
-    python tools/i18n_extract.py --missing de   # 列出德语还缺的 key（JSON，方便补）
+    python tools/i18n_extract.py            # check: Chinese not wrapped in t(), missing translations per language, mismatched placeholders
+    python tools/i18n_extract.py --keys keys.json   # also write all keys (with source files) to keys.json
+    python tools/i18n_extract.py --missing de   # list the keys German is still missing (JSON, easy to fill in)
 
-规则：
-  * JS：t('中文') / t("中文") / N_('中文')；模板字符串里别直接写中文，用 t('… {x} …', { x })
-  * Python：t("中文") / N_("中文")；提示词、正则这类不给用户看的中文，在那一行加 `# i18n: ignore`
-  * HTML：静态文字由服务端按原文替换；文字里夹了 <b>/<code> 的元素加 data-i18n 整段翻译
+Rules:
+  * JS: t('中文') / t("中文") / N_('中文'); don't put Chinese directly into template strings, use t('… {x} …', { x })
+  * Python: t("中文") / N_("中文"); Chinese users never see (prompts, regexes) gets `# i18n: ignore` on that line
+  * HTML: static text is replaced server-side by its source text; elements whose text contains <b>/<code> get data-i18n and are translated as a whole
 """
 from __future__ import annotations
 
@@ -29,14 +29,14 @@ LOCALES = ROOT / "static" / "locales"
 HTML_FILES = [ROOT / "static" / "index.html", *sorted((ROOT / "extension").glob("*.html"))]
 JS_FILES = [ROOT / "static" / "app.js", *sorted(p for p in (ROOT / "extension").glob("*.js") if p.name != "i18n.js")]
 PY_FILES = [ROOT / "app.py", *sorted((ROOT / "backend").rglob("*.py"))]
-# 整个文件都不是界面文字（识别规则、正则）
+# whole files that contain no interface text (detection rules, regexes)
 PY_IGNORE_FILES = {"backend/services/redact.py", "backend/i18n.py"}
 
 
 # ---- JS ----------------------------------------------------------------------
 
 def _js_tokens(src: str):
-    """逐个产出 (kind, text, start)：kind 为 str / tpl / code。注释跳过。"""
+    """Yield (kind, text, start) one by one: kind is str / tpl / code. Comments are skipped."""
     i, n = 0, len(src)
     code_start = 0
     while i < n:
@@ -121,7 +121,7 @@ def _js_unquote(lit: str) -> str:
 
 
 def _template_parts(tpl: str):
-    """把模板字符串拆成 (静态文字, [(表达式, 在 tpl 里的起点)])。"""
+    """Split a template string into (static text, [(expression, start in tpl)])."""
     static, exprs = [], []
     i, n = 1, len(tpl) - 1
     while i < n:
@@ -136,7 +136,7 @@ def _template_parts(tpl: str):
                     depth += 1
                 elif tpl[j] == "}":
                     depth -= 1
-                elif tpl[j] in "'\"`":          # 表达式里的字符串，跳过其中的括号
+                elif tpl[j] in "'\"`":          # strings inside the expression: skip the brackets in them
                     q, j = tpl[j], j + 1
                     while j < n and tpl[j] != q:
                         j += 2 if tpl[j] == "\\" else 1
@@ -196,7 +196,7 @@ def py_scan(path: Path):
         body = getattr(node, "body", None)
         if isinstance(body, list) and body and isinstance(body[0], ast.Expr) \
                 and isinstance(body[0].value, ast.Constant):
-            safe.add(id(body[0].value))          # 文档字符串
+            safe.add(id(body[0].value))          # docstring
         if isinstance(node, ast.Call):
             fn = node.func
             name = fn.id if isinstance(fn, ast.Name) else (fn.attr if isinstance(fn, ast.Attribute) else "")
@@ -224,7 +224,7 @@ def _ignored(lines, node) -> bool:
     return any("i18n: ignore" in lines[k - 1] for k in range(node.lineno, end + 1))
 
 
-# ---- 汇总 --------------------------------------------------------------------
+# ---- summary ---------------------------------------------------------------------
 
 def extension_keys():
     keys = set()
@@ -237,7 +237,7 @@ def extension_keys():
 
 
 def extension_catalog(lang: str):
-    """扩展打包用的词典：只留扩展里用到的 key。"""
+    """Dictionary for the extension package: only keys used by the extension."""
     path = LOCALES / f"{lang}.json"
     full = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     return {k: full[k] for k in sorted(extension_keys()) if full.get(k)}
@@ -265,7 +265,7 @@ TAG = re.compile(r"</?[a-zA-Z][^>]*>")
 
 
 def placeholders(text: str) -> set:
-    """按 format_message 的规则找出用到的变量名（复数分支里的文字不算）。"""
+    """Find the variable names used, by the rules of format_message (text inside plural branches doesn't count)."""
     names, i = set(), 0
     while i < len(text):
         if text[i] != "{":

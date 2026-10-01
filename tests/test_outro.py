@@ -1,4 +1,4 @@
-"""片尾开关：和片头一样能关掉，关掉后不进视频、不配音、不被 AI 重新加回来。"""
+"""The outro switch: like the intro it can be turned off; then it isn't in the video, isn't voiced and isn't added back by the AI."""
 import os
 import shutil
 import subprocess
@@ -21,7 +21,7 @@ from backend import config, main, storage  # noqa: E402
 from backend.services import ffmpeg_util, script_gen, tts, video  # noqa: E402
 import selftest  # noqa: E402
 
-# 全局设置写到临时文件，不碰你真实的 config.json
+# global settings go to a temporary file, never your real config.json
 config.CONFIG_PATH = DATA / "config.json"
 config._cache = None
 
@@ -44,7 +44,7 @@ def wait(j):
         time.sleep(0.2)
 
 
-# 离线假配音：一段真实的 1 秒静音 mp3
+# offline fake voice-over: a real 1-second silent mp3
 SILENT = SP / "outro_silent.mp3"
 subprocess.run([ffmpeg_util.ffmpeg_bin(), "-y", "-loglevel", "error", "-f", "lavfi", "-i",
                 "anullsrc=r=24000:cl=mono", "-t", "1", "-q:a", "9", str(SILENT)], check=True)

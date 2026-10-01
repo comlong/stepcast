@@ -1,4 +1,4 @@
-"""各语言的一句样例（给语言判断的测试用；都是自己写的通用句子）。"""
+"""One sample sentence per language (for the language detection tests; all generic sentences written for this purpose)."""
 SAMPLES = {
     "zh": "这一页介绍新系统是怎么工作的，以及团队可以为客户做些什么。",
     "ja": "このスライドでは、新しいシステムの仕組みとチームが顧客のためにできることを説明します。",

@@ -1,5 +1,5 @@
-"""OpenAI 兼容协议（/chat/completions）：DeepSeek、豆包、通义千问、智谱 GLM、MiniMax、OpenAI、Mistral、Gemini、
-Azure OpenAI、Ollama 等。"""
+"""OpenAI-compatible protocol (/chat/completions): DeepSeek, Doubao, Qwen, Zhipu GLM, MiniMax, OpenAI, Mistral, Gemini,
+Azure OpenAI, Ollama and others."""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
@@ -18,7 +18,7 @@ class OpenAICompatClient:
         self.api_key = r.api_key
         self.base_url = r.base_url
         self.model = r.model
-        self.api_model, self.extra = request_model(r)      # DeepSeek 老模型名的换算，见 llm.request_model
+        self.api_model, self.extra = request_model(r)      # mapping of old DeepSeek model names, see llm.request_model
 
     def _headers(self) -> Dict[str, str]:
         h = {"Content-Type": "application/json"}
@@ -60,7 +60,7 @@ class OpenAICompatClient:
                     url, headers=self._headers(), json=payload, timeout=timeout))
             except LLMError:
                 raise
-            except Exception as e:  # 网络抖动重试
+            except Exception as e:  # retry on network hiccups
                 last_err = e
                 attempt += 1
                 if attempt <= retries:
@@ -68,7 +68,7 @@ class OpenAICompatClient:
                 continue
 
             if r.status_code == 400 and adjustments < 3 and _drop_unsupported(payload, r.text):
-                adjustments += 1          # 有的模型不认 temperature / max_tokens / json 模式：去掉再试，不算重试次数
+                adjustments += 1          # some models reject temperature / max_tokens / JSON mode: drop it and try again; doesn't count as a retry
                 continue
             if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
                 last_err = LLMError(i18n.t("{name} 返回 {status}", name=self.name, status=r.status_code))
@@ -97,7 +97,7 @@ class OpenAICompatClient:
         return [str(m.get("id") or m.get("name") or "").removeprefix("models/")
                 for m in items if isinstance(m, dict) and (m.get("id") or m.get("name"))]
 
-    # ---- 内部 ----
+    # ---- internals ----
 
     def _content(self, r: requests.Response) -> str:
         try:
@@ -106,7 +106,7 @@ class OpenAICompatClient:
         except Exception:
             raise LLMError(i18n.t("{name} 返回了看不懂的内容：{body}", name=self.name, body=r.text[:300]))
         content = (choice.get("message") or {}).get("content") or ""
-        if isinstance(content, list):           # 少数服务按片段返回
+        if isinstance(content, list):           # a few services return the content in parts
             content = "".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
         content = strip_think(content) if "<think>" in content else content
         if not content.strip() and choice.get("finish_reason") == "length":
@@ -127,12 +127,12 @@ class OpenAICompatClient:
 
 
 def _drop_unsupported(payload: Dict[str, Any], body: str) -> bool:
-    """根据 400 报错去掉模型不支持的参数。改动了就返回 True。"""
+    """Remove parameters the model doesn't support, based on the 400 error. Returns True if anything changed."""
     text = body.lower()
     if "temperature" in text and "temperature" in payload:
         payload.pop("temperature")
         return True
-    # 注意 "max_tokens" 不是 "max_completion_tokens" 的子串，按请求里实际用的那个判断
+    # note that "max_tokens" isn't a substring of "max_completion_tokens"; check the one actually used in the request
     if "max_tokens" in text and "max_tokens" in payload:
         payload["max_completion_tokens"] = payload.pop("max_tokens")
         return True
@@ -142,7 +142,7 @@ def _drop_unsupported(payload: Dict[str, Any], body: str) -> bool:
     if ("response_format" in text or "json_object" in text) and "response_format" in payload:
         payload.pop("response_format")
         return True
-    for k in ("thinking", "enable_thinking", "reasoning_split"):     # 关思考的参数，有的模型 / 自建接口不认
+    for k in ("thinking", "enable_thinking", "reasoning_split"):     # parameters for switching thinking off; some models / self-hosted APIs reject them
         if k in text and k in payload:
             payload.pop(k)
             return True

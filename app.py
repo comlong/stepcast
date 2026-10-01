@@ -1,7 +1,7 @@
-"""StepCast 启动入口。
+"""StepCast entry point.
 
-用法：
-    python app.py                 # 启动服务并打开编辑器
+Usage:
+    python app.py                 # start the service and open the editor
     python app.py --port 9000
     python app.py --no-browser
 """
@@ -20,8 +20,8 @@ from backend import config
 
 
 def main() -> int:
-    # 输出被重定向到文件、或控制台不是 UTF-8 时，打印 ✓ 这类字符不能让程序崩掉。
-    # 重定向到文件时统一写 UTF-8、按行刷新：日志里的中文 / 德文不会变成问号，程序被强制结束也不丢日志
+    # when output is redirected to a file or the console isn't UTF-8, printing characters like ✓ must not crash the program.
+    # when redirected to a file, always write UTF-8 and flush per line: Chinese / German in the log doesn't turn into question marks, and nothing is lost if the program is killed
     for stream in (sys.stdout, sys.stderr):
         try:
             if stream.isatty():
@@ -41,7 +41,7 @@ def main() -> int:
     port = args.port or int(config.get("server_port", 8756))
     url = f"http://{args.host}:{port}/"
 
-    # 已经在运行（比如又双击了一次 exe）：直接打开编辑器，不再启动第二份
+    # already running (e.g. the exe was double-clicked again): just open the editor, don't start a second instance
     if _already_running(args.host, port):
         print(i18n.t("StepCast 已经在运行：{url}", url=url))
         if not args.no_browser:
@@ -120,7 +120,7 @@ if __name__ == "__main__":
         import traceback
         traceback.print_exc()
         code = 1
-    # 双击 exe 打开的窗口，出错时会一闪而过；停一下让人看清报错
+    # a window opened by double-clicking the exe would vanish instantly on errors; pause so the error can be read
     if code and config.FROZEN:
         try:
             print()

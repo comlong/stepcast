@@ -1,13 +1,13 @@
-"""PPT / PDF 转视频。
+"""PPT / PDF to video.
 
-流程：
-  上传 -> 解析出每页缩略图、正文、演讲者备注 -> 选页 / 选备注用法 / 选详细程度
-  -> 每页生成一个静态步骤，解说来自备注或 AI -> 配音 -> 进入编辑器
+Flow:
+  upload -> extract each slide's thumbnail, text and speaker notes -> pick slides / how to use the notes / level of detail
+  -> one static step per slide, narration from the notes or the AI -> voice-over -> open the editor
 
-幻灯片图片的导出优先级：
-  1. 本机 PowerPoint（COM，保真度最高）
-  2. LibreOffice（转 PDF 再栅格化）
-  3. 兜底：只用文字画一张简版幻灯片
+Slide image export, in order of preference:
+  1. PowerPoint on this computer (COM, highest fidelity)
+  2. LibreOffice (convert to PDF, then rasterise)
+  3. fallback: draw a simple slide from the text only
 """
 from __future__ import annotations
 
@@ -67,13 +67,13 @@ def _save_manifest(iid: str, data: Dict[str, Any]) -> None:
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-# ---- 文字 / 备注 ----------------------------------------------------------
+# ---- text / notes ----------------------------------------------------------
 
 def _collect_text(shapes, title: str, lines: List[str]) -> None:
-    """递归取文字：普通文本框、表格，以及组合形状里的子形状。"""
+    """Collect text recursively: text boxes, tables and shapes inside groups."""
     for shp in shapes:
         try:
-            if hasattr(shp, "shapes"):                 # 组合形状
+            if hasattr(shp, "shapes"):                 # group shape
                 _collect_text(shp.shapes, title, lines)
             elif shp.has_text_frame:
                 t = shp.text_frame.text.strip()
@@ -89,10 +89,10 @@ def _collect_text(shapes, title: str, lines: List[str]) -> None:
 
 
 def _notes_text(slide) -> str:
-    """读演讲者备注。
+    """Read the speaker notes.
 
-    标准做法是 notes_text_frame；但 Google Slides / Keynote 等导出的 PPTX，备注页有时没有
-    正文占位符，文字放在普通文本框里——这时退回到收集备注页上的其他文字（排除页码、页眉页脚）。
+    The standard way is notes_text_frame; but PPTX exported from Google Slides / Keynote sometimes has no body placeholder
+    on the notes page and puts the text in an ordinary text box — then fall back to the other text on the notes page (excluding page numbers, headers and footers).
     """
     if not slide.has_notes_slide:
         return ""
@@ -136,10 +136,10 @@ def _pptx_text(pptx_path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-# ---- 渲染：PowerPoint COM ---------------------------------------------------
+# ---- rendering: PowerPoint COM ---------------------------------------------------
 
 def powerpoint_available() -> bool:
-    if os.name != "nt" or os.environ.get("VT_DISABLE_POWERPOINT"):   # 服务器 / 测试时不去碰本机的 PowerPoint
+    if os.name != "nt" or os.environ.get("VT_DISABLE_POWERPOINT"):   # on servers / in tests never touch the local PowerPoint
         return False
     try:
         import winreg
@@ -151,7 +151,7 @@ def powerpoint_available() -> bool:
 
 
 def _render_powerpoint(src: Path, out_dir: Path, progress: Progress = None) -> Dict[str, Any]:
-    """用本机 PowerPoint 逐页导出 PNG。不会关掉你已经打开的其他演示文稿。"""
+    """Export each slide as PNG with the local PowerPoint. Other presentations you have open are never closed."""
     import pythoncom
     import win32com.client
 
@@ -183,7 +183,7 @@ def _render_powerpoint(src: Path, out_dir: Path, progress: Progress = None) -> D
                 hidden[i] = False
             if progress:
                 progress(0.1 + 0.8 * i / n, i18n.t("PowerPoint 导出第 {i}/{n} 页", i=i, n=n))
-        # .ppt 老格式：顺手另存一份 pptx，好读备注
+        # old .ppt format: also save a .pptx copy so the notes can be read
         pptx_copy = None
         if src.suffix.lower() == ".ppt":
             pptx_copy = out_dir / "converted.pptx"
@@ -203,7 +203,7 @@ def _render_powerpoint(src: Path, out_dir: Path, progress: Progress = None) -> D
         pythoncom.CoUninitialize()
 
 
-# ---- 渲染：LibreOffice / PDF ------------------------------------------------
+# ---- rendering: LibreOffice / PDF ------------------------------------------------
 
 def _soffice() -> Optional[str]:
     for p in (shutil.which("soffice"),
@@ -251,7 +251,7 @@ def _render_libreoffice(src: Path, out_dir: Path, progress: Progress = None) -> 
 
 
 def _render_text_fallback(slides: List[Dict[str, Any]], out_dir: Path) -> None:
-    """什么渲染器都没有时，用标题 + 正文画一张干净的简版页。"""
+    """Without any renderer, draw a clean simple slide from the title and body text."""
     from .renderer import load_font, wrap_text
     W, H = RENDER_WIDTH, int(RENDER_WIDTH * 9 / 16)
     for s in slides:
@@ -273,7 +273,7 @@ def _render_text_fallback(slides: List[Dict[str, Any]], out_dir: Path) -> None:
         img.save(out_dir / f"slide_{s['i']:03d}.png")
 
 
-# ---- 第一阶段：上传 + 解析 --------------------------------------------------
+# ---- stage 1: upload + parse --------------------------------------------------
 
 def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict[str, Any]:
     ext = Path(filename).suffix.lower()
@@ -287,7 +287,7 @@ def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict
 
     slides: List[Dict[str, Any]] = []
     engine = ""
-    video_source: Optional[Path] = None           # 从哪个 pptx 里取视频（.ppt 用 PowerPoint 转好的那份）
+    video_source: Optional[Path] = None           # which pptx to take the videos from (for .ppt, the copy converted by PowerPoint)
     if progress:
         progress(0.03, i18n.t("读取文件…"))
 
@@ -339,7 +339,7 @@ def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict
             th.thumbnail((THUMB_WIDTH, THUMB_WIDTH))
             th.save(d / f"thumb_{s['i']:03d}.jpg", "JPEG", quality=82)
 
-    # 页面里的视频：导出成图片时只剩封面，这里把视频文件本身取出来
+    # videos on the slides: an exported image keeps only the poster, so extract the video files themselves here
     videos: Dict[int, List[Dict[str, Any]]] = {}
     if video_source is not None:
         if progress:
@@ -365,7 +365,7 @@ def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict
     return manifest
 
 
-# ---- 第二阶段：生成项目 -----------------------------------------------------
+# ---- stage 2: create the project -----------------------------------------------------
 
 def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) -> Dict[str, Any]:
     from . import script_gen, tts
@@ -381,7 +381,7 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
     name = req.name or Path(man["filename"]).stem
     proj = storage.create(name, req.language)
     proj.source = "slides"
-    proj.voice = req.voice or proj.voice      # 没选就用设置里的音色（storage.create 已按解说语言挑好）
+    proj.voice = req.voice or proj.voice      # none chosen: use the voice from the settings (storage.create already picked one for the narration language)
     proj.settings = {
         "slides_notes_mode": req.notes_mode,
         "slides_missing": req.missing,
@@ -393,7 +393,7 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
         "browser_frame": False,
     }
     if req.dialogue:
-        # 双人问答：主持人提问、讲师讲解。片头片尾和没有台词的解说由主持人念
+        # two-person Q&A: the host asks, the expert explains. Intro, outro and narration without lines are read by the host
         from . import dialogue
         proj.settings["dialogue"] = True
         proj.speakers = dialogue.default_speakers(req.language or proj.language, req.host_voice, req.expert_voice)
@@ -413,8 +413,8 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
         step.viewport_w, step.viewport_h = step.img_w, step.img_h
         if s["i"] in reveal:
             step.reveal = _attach_reveal(proj, step, reveal[s["i"]], src_dir / "reveal")
-            # 封面默认整页出现：大标题常常在页面中间、不在顶部标题区，会被拆成好几条。数据照样生成，
-            # 真要逐条出现可以在编辑器里打开这一页的开关
+            # the cover appears as a whole by default: its big title is often in the middle of the page, not in the title area, and would be split into several items. The data is still generated;
+            # to reveal it one by one, switch it on for this slide in the editor
             step.reveal.enabled = not _is_cover(s, man)
         step.index = len(proj.steps)
         proj.steps.append(step)
@@ -432,8 +432,8 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
             proj, notes_mode=req.notes_mode, detail=req.detail, missing=req.missing,
             progress=lambda f, m: progress(0.1 + f * 0.5, m) if progress else None)
     except LLMError as e:
-        # 没配 AI Key、AI 服务出错：项目已经建好了，别让整个导入失败（以前会留下一个半截项目、编辑器也不打开）。
-        # 已经用备注原文写好的解说保留，其余先空着
+        # no AI key or the AI service failed: the project already exists, so don't fail the whole import (this used to leave a half-made project and not open the editor).
+        # narration already taken from the notes is kept; the rest stays empty for now
         res = None
         warning = i18n.t("解说没能自动生成：{error}\n项目已经建好，可以在编辑器里自己写解说，或者配好 AI 后点「① 生成解说」。",
                          error=e)
@@ -453,14 +453,14 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
 
 
 def _is_cover(s: Dict[str, Any], man: Dict[str, Any]) -> bool:
-    """封面 = 多页 PPT 的第 1 页，而且字不多（标题、副标题、日期）。第 1 页就是正文的不算。"""
+    """Cover = slide 1 of a multi-slide deck with little text (title, subtitle, date). A first slide that is already content doesn't count."""
     return s["i"] == 1 and man.get("count", 0) > 1 and len(re.sub(r"\s+", "", s.get("text") or "")) < 120
 
 
 def _export_reveal(man: Dict[str, Any], slides: List[Dict[str, Any]], src_dir: Path, req: SlidesCreateReq,
                    warnings: List[str], progress: Progress) -> Dict[int, Dict[str, Any]]:
-    """逐条出现：用 PowerPoint 给选中的页导出底图和每一条。只对 PowerPoint 导出的 PPT 页做
-    （底图、条目和整页图要出自同一个渲染引擎，字体和位置才对得上）。"""
+    """Reveal one by one: export base images and items for the selected slides with PowerPoint. Only for slides exported by PowerPoint
+    (base image, items and full slide must come from the same renderer for fonts and positions to match)."""
     if not req.reveal or man.get("ext") not in (".pptx", ".ppt"):
         return {}
     if man.get("engine") != "PowerPoint" or not powerpoint_available():
@@ -472,13 +472,13 @@ def _export_reveal(man: Dict[str, Any], slides: List[Dict[str, Any]], src_dir: P
             src_dir / ("source" + man["ext"]), pages, src_dir / "reveal", RENDER_WIDTH,
             progress=lambda f, m: progress(0.02 + f * 0.08, m) if progress else None,
             label=lambda i, n: i18n.t("分析页面内容，准备逐条出现 {i}/{n}", i=i, n=n))
-    except Exception as e:  # noqa: BLE001 —— 逐条出现只是锦上添花，出错也照常导入
+    except Exception as e:  # noqa: BLE001 — revealing is a nice extra; on errors import as usual
         warnings.append(i18n.t("逐条出现没能生成（{error}），所有页整页一起出现。", error=str(e)[:160]))
         return {}
 
 
 def _attach_reveal(proj: Project, step: Step, meta: Dict[str, Any], src: Path) -> SlideReveal:
-    """把这一页的底图和条目图拷进项目，文件名跟着步骤走。"""
+    """Copy this slide's base image and item images into the project; file names follow the step."""
     shots = storage.screenshots_dir(proj.id)
     clean = f"{step.id}_clean.png"
     shutil.copyfile(src / meta["clean"], shots / clean)
@@ -491,7 +491,7 @@ def _attach_reveal(proj: Project, step: Step, meta: Dict[str, Any], src: Path) -
 
 
 def _video_step(proj: Project, s: Dict[str, Any], v: Dict[str, Any], src_dir: Path) -> Step:
-    """幻灯片里的一个视频 -> 紧跟在这页后面的「视频」步骤。底图就是这页幻灯片（视频在原位置播放）。"""
+    """A video on a slide -> a "video" step right after that slide. Its base image is the slide (the video plays in place)."""
     step = Step(kind="video", page_title=s["title"][:120], img_w=s.get("w", 0), img_h=s.get("h", 0),
                 title="", zoom=False, highlight=False)
     fname = f"{step.id}.png"
@@ -502,11 +502,11 @@ def _video_step(proj: Project, s: Dict[str, Any], v: Dict[str, Any], src_dir: Pa
     if v.get("file") and not v.get("missing"):
         name = f"{step.id}{Path(v['file']).suffix}"
         clips.media_dir(proj.id).mkdir(parents=True, exist_ok=True)
-        # 视频可能有几百 MB：导入目录和项目在同一个盘上，用硬链接，不再拷一份
+        # videos can be hundreds of MB: the import folder and the project are on the same drive, so hard-link instead of copying
         clips.link_or_copy(src_dir / v["file"], clips.media_dir(proj.id) / name)
         step.clip.file = name
     else:
-        # 链接的 / 在线的 / 坏掉的视频拿不到文件：先不放进成片（不然这页会重复出现一次），上传后自动加上
+        # linked / online / broken videos have no file: leave them out of the video for now (otherwise the slide would appear twice); added automatically after upload
         step.include = False
     step.index = len(proj.steps)
     return step

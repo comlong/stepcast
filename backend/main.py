@@ -1,4 +1,4 @@
-"""FastAPI 服务：接收扩展录制数据 + 提供编辑器界面 + 生成脚本/语音/视频。"""
+"""FastAPI service: receives recordings from the extension, serves the editor and generates scripts / voice-over / videos."""
 from __future__ import annotations
 
 import json
@@ -26,25 +26,25 @@ from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, reda
 
 app = FastAPI(title="StepCast", version="1.8.0")
 
-# ---- 只允许本机访问 ---------------------------------------------------------
-# 服务里有你录的内部系统截图和大模型 API Key 的使用权。如果放开 CORS，你浏览的任何网页
-# 都能在后台调这个本地服务：读截图、把接口地址改成别人的服务器来截获 Key。
+# ---- local access only ---------------------------------------------------
+# The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
+# you visit could call this local service in the background: read screenshots, or point the API endpoint to someone else's server to capture keys.
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"} | {
     h.strip() for h in os.environ.get("VT_ALLOWED_HOSTS", "").split(",") if h.strip()}
 
 
 def _origin_allowed(origin: str, host: str) -> bool:
     if origin.startswith("chrome-extension://"):
-        return True                                  # 本项目的录制扩展
+        return True                                  # this project's recording extension
     try:
         o = urlparse(origin)
-        return o.netloc == host                      # 编辑器页面自己（同源）
+        return o.netloc == host                      # the editor page itself (same origin)
     except Exception:
         return False
 
 
 class LocalOnly:
-    """拒绝跨站请求（Origin 不是本服务或扩展）和 DNS 重绑定（Host 不是本机）。"""
+    """Reject cross-site requests (Origin is neither this service nor the extension) and DNS rebinding (Host isn't local)."""
 
     def __init__(self, app):
         self.app = app
@@ -76,21 +76,21 @@ app.add_middleware(
 )
 app.add_middleware(LocalOnly)
 
-# 后台任务改写项目时只合并这些字段（见 storage.commit）
+# Background jobs that rewrite a project only merge these fields (see storage.commit)
 STEP_TEXT = ("title", "narration", "caption", "lines")
 AUDIO = storage.AUDIO_FIELDS
 CARD = ("title", "subtitle", "intro", "outro", "summary")
 
 
 def _snapshot(pid: str):
-    """任务开始时的项目快照 + 一份可以随便改的副本。"""
+    """Project snapshot at the start of a job + a copy that can be modified freely."""
     before = _need(pid)
     return before, before.model_copy(deep=True)
 
 
 @contextmanager
 def _keep_done_on_stop(pid: str, before: Project, proj: Project, **commit_kw):
-    """任务被停止时，把已经做完的那部分（比如已经配好音的步骤）合并回项目再退出。"""
+    """When a job is stopped, merge the finished part (e.g. steps already voiced) back into the project, then exit."""
     try:
         yield
     except jobs.JobCancelled:
@@ -104,14 +104,14 @@ def _submit(kind: str, fn, pid: str = "", exclusive=None):
     except jobs.JobConflict as e:
         raise HTTPException(409, str(e))
 
-# 当前录制状态（扩展与界面共享）
+# Current recording state (shared by the extension and the editor)
 _recording: Dict[str, Any] = {"project_id": "", "started_at": 0.0, "last_step_at": 0.0}
 
 
-# ---- 基础 ---------------------------------------------------------------
+# ---- basics ---------------------------------------------------------------
 
 def ui_language() -> str:
-    """当前界面语言。没设置过（或设置的语言不支持）一律英语，在右上角下拉框里切换。"""
+    """Current interface language. English if never set (or unsupported); switched with the dropdown at the top right."""
     return i18n.normalize(config.get("ui_language")) or i18n.FALLBACK
 
 
@@ -122,12 +122,12 @@ def index(request: Request):
         return HTMLResponse("<h1>static/index.html is missing</h1>", status_code=500)
     lang = ui_language()
     html = i18n.translate_html(f.read_text(encoding="utf-8"), lang)
-    # 给脚本和样式带上修改时间做版本号：代码更新后浏览器一定拿到新文件，不用手动强制刷新
+    # Version scripts and styles by modification time: after an update the browser always gets the new files without a forced reload
     for name in ("app.js", "style.css", "i18n.js"):
         path = config.STATIC_DIR / name
         if path.exists():
             html = html.replace(f"/static/{name}\"", f"/static/{name}?v={int(path.stat().st_mtime)}\"")
-    # 译文直接嵌进页面：脚本一加载就能用 t()，也不会先闪一下中文
+    # Embed the translations in the page: t() works as soon as the script loads, with no flash of Chinese text
     boot = json.dumps({"lang": lang, "langs": i18n.LANGS, "dict": i18n.catalog(lang)},
                       ensure_ascii=False).replace("</", "<\\/")
     html = html.replace('<html lang="zh-CN">', f'<html lang="{lang}">', 1)
@@ -138,7 +138,7 @@ def index(request: Request):
 
 @app.get("/api/i18n")
 def get_i18n(lang: str = ""):
-    """给 Chrome 扩展用：当前界面语言和词典。"""
+    """For the Chrome extension: current interface language and dictionary."""
     code = i18n.normalize(lang) or ui_language()
     return {"lang": code, "langs": i18n.LANGS, "dict": i18n.catalog(code)}
 
@@ -156,7 +156,7 @@ def health():
         "data_dir": str(config.DATA_DIR),
         "asr": asr.status(),
         "powerpoint": slides.powerpoint_available(),
-        "languages": language_list(),        # Chrome 扩展「边录边讲」的语言列表跟这里走
+        "languages": language_list(),        # the extension's narrate-while-recording language list comes from here
     }
 
 
@@ -164,7 +164,7 @@ def health():
 def get_settings():
     cfg = config.load()
     safe = {k: v for k, v in cfg.items() if k not in ("deepseek_api_key", "llm_providers", "tts_services")}
-    safe["llm"] = llm.public_state(cfg)     # 各家的 Key 只给掩码
+    safe["llm"] = llm.public_state(cfg)     # keys are only returned masked
     safe["tts_services"] = tts_cloud.public_state(cfg)
     return safe
 
@@ -181,13 +181,13 @@ def set_settings(patch: Dict[str, Any] = Body(...)):
 
 @app.post("/api/settings/test-tts")
 def settings_test_tts(body: Dict[str, Any] = Body(default={})):
-    """测试一个商用配音服务：合成一小句。没填 Key 就用已保存的。"""
+    """Test a paid voice service by synthesising a short sentence. Uses the saved key if none is given."""
     return tts_cloud.test(str(body.get("service") or ""), str(body.get("api_key") or ""))
 
 
 @app.post("/api/settings/test-key")
 def settings_test_key(body: Dict[str, Any] = Body(default={})):
-    """测试连接。没填的字段用已保存的值，所以只改了模型也能测。"""
+    """Test the connection. Empty fields use the saved values, so changing just the model can be tested too."""
     return llm.test_connection(str(body.get("provider") or ""), str(body.get("api_key") or ""),
                                str(body.get("base_url") or ""), str(body.get("model") or ""))
 
@@ -200,7 +200,7 @@ def settings_llm_models(body: Dict[str, Any] = Body(default={})):
 
 @app.get("/api/voices")
 def get_voices(locale: str = "", refresh: bool = False):
-    """Edge 免费音色 + 已经配好 Key 的商用配音服务的音色。"""
+    """Free Edge voices + voices of the paid voice services that have a key."""
     try:
         data = list(tts.list_voices(force=refresh))
     except Exception as e:
@@ -222,11 +222,11 @@ def get_languages():
 
 
 def language_list() -> List[Dict[str, str]]:
-    """解说语言 / 第二字幕可选的语言，group：zh（中文）、europe（欧洲语言）、other（其他）。"""
+    """Languages available for narration / second subtitles; group: zh (Chinese), europe (European), other."""
     return [{"code": k, "name": v, "group": script_gen.LANG_GROUP[k]} for k, v in script_gen.LANG_NAMES.items()]
 
 
-# ---- 录制（Chrome 扩展调用） ----------------------------------------------
+# ---- recording (called by the Chrome extension) ----------------------------
 
 @app.post("/api/capture/start")
 def capture_start(req: StartCaptureReq):
@@ -269,7 +269,7 @@ def capture_step(req: CaptureStepReq):
         redactions=req.redactions,
         text_nodes=req.text_nodes[:400],
     )
-    # 扩展已经在页面上识别出敏感信息时，顺手把文字字段里的也抹掉
+    # If the extension already found sensitive data on the page, mask it in the text fields as well
     if step.redactions:
         words = [r.label for r in step.redactions if r.label]
         if words:
@@ -284,7 +284,7 @@ def capture_step(req: CaptureStepReq):
     if not step.viewport_w and step.img_w and req.device_pixel_ratio:
         step.viewport_w = int(step.img_w / max(0.1, req.device_pixel_ratio))
     if req.client_ts:
-        step.ts = req.client_ts / 1000.0      # 浏览器里的事件时间，边录边讲靠它对齐
+        step.ts = req.client_ts / 1000.0      # event time in the browser; narrate-while-recording aligns by it
     count = storage.add_step(pid, step)
     _recording["last_step_at"] = time.time()
     return {"ok": True, "step_id": step.id, "index": step.index, "steps": count}
@@ -305,7 +305,7 @@ def capture_stop(body: Dict[str, Any] = Body(default={})):
             "editor_url": f"http://127.0.0.1:{config.get('server_port')}/?p={pid}"}
 
 
-# ---- 项目 ---------------------------------------------------------------
+# ---- projects -------------------------------------------------------------
 
 @app.get("/api/projects")
 def list_projects():
@@ -319,7 +319,7 @@ def create_project(body: Dict[str, Any] = Body(default={})):
 
 
 def _public(proj: Project) -> Dict[str, Any]:
-    """返回给编辑器的项目数据。文字索引只在服务端扫描打码时用，长录制时有好几 MB，不下发。"""
+    """Project data for the editor. The text index is only used for server-side redaction scans and can be several MB, so it isn't sent."""
     data = proj.model_dump(exclude={"steps": {"__all__": {"text_nodes"}}})
     for d, s in zip(data["steps"], proj.steps):
         d["text_nodes_count"] = len(s.text_nodes)
@@ -347,10 +347,10 @@ def patch_project(pid: str, body: Dict[str, Any] = Body(...)):
         for k, v in body.items():
             if k in fields:
                 if k == "voice" and p.is_dialogue():
-                    continue              # 两人问答的音色在「🎭 讲者」里分别设置，不跟全局默认音色走
+                    continue              # Q&A voices are set per speaker under "🎭 Speakers", not by the global default voice
                 if k == "language" and p.is_dialogue() and v and v != p.language:
                     dialogue.retarget(p, v)
-                # 片头 / 片尾文案改了，旧配音作废，否则下次合成会跳过
+                # intro / outro text changed: the old voice-over is outdated, otherwise the next synthesis would skip it
                 if k in ("intro", "outro") and (v or "") != (getattr(p, k) or ""):
                     (storage.audio_dir(pid) / f"__{k}__.mp3").unlink(missing_ok=True)
                 setattr(p, k, v)
@@ -367,7 +367,7 @@ def delete_project(pid: str):
 
 @app.put("/api/projects/{pid}/steps")
 def replace_steps(pid: str, body: Dict[str, Any] = Body(...)):
-    """整表提交：支持排序、批量编辑、删除。"""
+    """Submit the whole step list: reordering, bulk edits, deletion."""
     incoming: List[Dict[str, Any]] = body.get("steps", [])
 
     def _do(p: Project):
@@ -419,7 +419,7 @@ def patch_step(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
                         setattr(s, k, v)
                 if "narration" in body and "lines" not in body:
                     drop_stale_lines(s)
-                if isinstance(body.get("lines"), list):          # 双人问答的台词：解说 = 台词全文
+                if isinstance(body.get("lines"), list):          # Q&A lines: narration = all lines joined
                     lines = dialogue.normalize_lines(body["lines"])
                     text = join_lines([DialogueLine(**x) for x in lines])
                     if text != (s.narration or "") and s.voice_source != "own":
@@ -429,7 +429,7 @@ def patch_step(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
                         s.caption = text
                     s.narration = text
                 if "reveal_enabled" in body and s.reveal is not None:
-                    s.reveal.enabled = bool(body["reveal_enabled"])      # 这一页用不用逐条出现
+                    s.reveal.enabled = bool(body["reveal_enabled"])      # whether this slide reveals points one by one
                 if body.get("target_rect"):
                     if s.target is None:
                         s.target = Target()
@@ -449,7 +449,7 @@ def delete_step(pid: str, sid: str):
         p.steps = [s for s in p.steps if s.id != sid]
         storage.reindex(p)
     storage.update(pid, _do)
-    for s in gone:                      # 视频步骤的视频文件可能有几百 MB，跟着删掉
+    for s in gone:                      # a video step's file can be hundreds of MB, delete it too
         src = clips.resolve(pid, s.clip)
         if src is not None:
             src.unlink(missing_ok=True)
@@ -458,7 +458,7 @@ def delete_step(pid: str, sid: str):
 
 @app.put("/api/projects/{pid}/speakers")
 def put_speakers(pid: str, body: Dict[str, Any] = Body(...)):
-    """双人问答的两位讲者：改名字、换音色。换了音色的人说过的台词要重新配音（旧配音作废）。"""
+    """The two Q&A speakers: rename, change voices. Lines spoken by someone whose voice changed need new voice-over (the old one is outdated)."""
     _need(pid)
 
     def _do(p: Project):
@@ -480,7 +480,7 @@ def put_speakers(pid: str, body: Dict[str, Any] = Body(...)):
                 s.audio, s.audio_duration, s.boundaries, s.line_times = "", 0.0, [], []
         if "host" in changed:
             p.voice = dialogue.speaker(p, "host").voice
-            for k in ("intro", "outro"):                  # 片头片尾由主持人念
+            for k in ("intro", "outro"):                  # intro and outro are read by the host
                 (storage.audio_dir(pid) / f"__{k}__.mp3").unlink(missing_ok=True)
         return {"speakers": [sp.model_dump() for sp in p.speakers], "changed": sorted(changed)}
     return storage.update(pid, _do)
@@ -517,7 +517,7 @@ def rewrite(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
                     if s.caption_follows_narration():
                         s.caption = text
                     s.narration = text
-                    # 改写后的文字和原声对不上了，改由 AI 朗读（原声文件保留在磁盘上）
+                    # the rewritten text no longer matches the recording, so the AI reads it (the recording stays on disk)
                     s.voice_source = "tts"
                     s.audio = ""
                     s.audio_duration = 0.0
@@ -537,7 +537,7 @@ def step_tts(pid: str, sid: str, body: Dict[str, Any] = Body(default={})):
     path = storage.audio_dir(pid) / f"{step.id}.mp3"
     times: List[List[float]] = []
     try:
-        if proj.is_dialogue() and step.lines:          # 双人问答：逐句用各自的音色合成
+        if proj.is_dialogue() and step.lines:          # Q&A: synthesise line by line with each speaker's voice
             dur, bounds, times = dialogue.synth_lines(proj, step, path)
         else:
             voice = body.get("voice") or proj.voice or tts.default_voice(proj.language)
@@ -572,11 +572,11 @@ def step_preview(pid: str, sid: str, t: float = 1.2, scale: float = 0.5):
     return Response(data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-# ---- 敏感信息打码 ----------------------------------------------------------
+# ---- redaction --------------------------------------------------------------
 
 @app.put("/api/projects/{pid}/steps/{sid}/redactions")
 def set_redactions(pid: str, sid: str, req: RedactionsReq):
-    """整表替换某一步的打码框（编辑器画框 / 删除都走这里）。"""
+    """Replace all redaction boxes of a step (drawing / deleting boxes in the editor goes through here)."""
     def _do(p: Project):
         for s in p.steps:
             if s.id == sid:
@@ -589,7 +589,7 @@ def set_redactions(pid: str, sid: str, req: RedactionsReq):
 
 @app.post("/api/projects/{pid}/redact/scan")
 def redact_scan(pid: str, req: RedactScanReq):
-    """按内置规则 + 关键词扫描全部（或指定）步骤，自动加打码框。"""
+    """Scan all (or the given) steps with the built-in rules + keywords and add redaction boxes automatically."""
     _need(pid)
 
     def _do(p: Project):
@@ -604,7 +604,7 @@ def redact_scan(pid: str, req: RedactScanReq):
 
 @app.post("/api/projects/{pid}/redact/clear-auto")
 def redact_clear_auto(pid: str, body: Dict[str, Any] = Body(default={})):
-    """删掉自动识别的打码框，手动画的保留。"""
+    """Remove automatically detected redaction boxes; hand-drawn ones stay."""
     _need(pid)
     removed = storage.update(pid, lambda p: redact.clear_auto(p, body.get("steps")))
     return {"removed": removed, **redact.stats(_need(pid))}
@@ -612,7 +612,7 @@ def redact_clear_auto(pid: str, body: Dict[str, Any] = Body(default={})):
 
 @app.post("/api/projects/{pid}/redact/clear-index")
 def redact_clear_index(pid: str):
-    """清空本机保存的页面文字索引。已经打好的码不受影响。"""
+    """Clear the locally stored page text index. Existing redactions are not affected."""
     _need(pid)
     removed = storage.update(pid, lambda p: redact.clear_index(p))
     return {"removed": removed, **redact.stats(_need(pid))}
@@ -624,7 +624,7 @@ def redact_stats(pid: str):
 
 
 
-# ---- 语音输入（录自己的声音 / 口述 / 边录边讲）----------------------------------
+# ---- voice input (record your voice / dictate / narrate while recording) ----
 
 @app.get("/api/asr/status")
 def asr_status():
@@ -633,7 +633,7 @@ def asr_status():
 
 @app.post("/api/asr/prepare")
 def asr_prepare():
-    """提前下载 / 加载语音识别模型。"""
+    """Download / load the speech recognition model in advance."""
     def work(job: jobs.Job):
         asr.get_model(job.progress)
         job.progress(1.0, i18n.t("语音识别模型已就绪"))
@@ -648,7 +648,7 @@ def _step_or_404(proj: Project, sid: str) -> Step:
     return step
 
 
-# ---- 视频步骤 ---------------------------------------------------------------
+# ---- video steps -------------------------------------------------------------
 
 def _video_upload(file: UploadFile, prefix: str) -> Path:
     import shutil
@@ -668,13 +668,13 @@ def _submit_upload(kind: str, work, pid: str, tmp: Path):
     try:
         return _submit(kind, work, pid, exclusive={"render", "auto"})
     except HTTPException:
-        tmp.unlink(missing_ok=True)          # 正在渲染时被拒绝：上传的临时文件也要删
+        tmp.unlink(missing_ok=True)          # refused because a render is running: delete the uploaded temp file too
         raise
 
 
 @app.patch("/api/projects/{pid}/steps/{sid}/video")
 def video_options(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
-    """视频步骤：播放方式、截取起止、声音。"""
+    """Video step: playback mode, trim, sound."""
     err: Dict[str, str] = {}
 
     def _do(p: Project):
@@ -715,7 +715,7 @@ def video_options(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
 
 @app.post("/api/projects/{pid}/steps/{sid}/video")
 def video_upload(pid: str, sid: str, file: UploadFile = File(...)):
-    """给视频步骤上传 / 换一个视频文件（PPT 里链接的、在线的视频取不到，要手动上传）。"""
+    """Upload / replace a video step's file (linked and online videos in a deck can't be retrieved and must be uploaded)."""
     step = _step_or_404(_need(pid), sid)
     if step.kind != "video":
         raise HTTPException(400, i18n.t("这一步不是视频"))
@@ -735,7 +735,7 @@ def video_upload(pid: str, sid: str, file: UploadFile = File(...)):
             def _do(p: Project):
                 st = _step_or_404(p, sid)
                 st.clip = clip
-                st.include = True               # 之前拿不到文件时是排除的，有了视频就放进成片
+                st.include = True               # it was excluded while the file was missing; with a video it goes into the final cut
                 clips.use_poster(pid, st, poster)
             storage.update(pid, _do)
             job.progress(1.0, i18n.t("视频已更新（{sec} 秒）", sec=f"{clip.duration:.1f}"))
@@ -747,7 +747,7 @@ def video_upload(pid: str, sid: str, file: UploadFile = File(...)):
 
 @app.post("/api/projects/{pid}/steps/video")
 def video_insert(pid: str, file: UploadFile = File(...), after: str = Form("")):
-    """在教程里插入一段视频（放在 after 这一步后面；不给就放到最后）。全屏播放。"""
+    """Insert a video into the tutorial (after the step `after`, or at the end). Plays full screen."""
     _need(pid)
     tmp = _video_upload(file, "video")
     name = file.filename or "video.mp4"
@@ -776,7 +776,7 @@ def video_insert(pid: str, file: UploadFile = File(...), after: str = Form("")):
 
 @app.post("/api/projects/{pid}/steps/{sid}/video/transcribe")
 def video_transcribe(pid: str, sid: str):
-    """把视频里讲的话识别出来，写进这一步的字幕（按讲话的时间对齐）。"""
+    """Transcribe the speech in the video into this step's subtitle (aligned to when it is spoken)."""
     step = _step_or_404(_need(pid), sid)
     src = clips.resolve(pid, step.clip)
     if src is None:
@@ -793,7 +793,7 @@ def video_transcribe(pid: str, sid: str):
                 raise RuntimeError(i18n.t("这个视频没有声音"))
             r = asr.transcribe(wav, _need(pid).language, progress=lambda f, m: job.progress(0.05 + f * 0.9, m))
             text = (r.get("text") or "").strip()
-            # 取出来的声音从截取起点开始：词的时间加回起点，存成「从视频开头算」，以后改截取也对得上
+            # the extracted audio starts at the trim start: add it back to the word times so they count from the video's start and survive later trim changes
             start = clips.clip_range(s.clip)[0]
             words = [{**w, "t": round(w["t"] + start, 3)}
                      for w in asr.words_to_boundaries(r["segments"], 0.0, r["language"])]
@@ -818,7 +818,7 @@ def _tmp_name(prefix: str) -> str:
 
 @app.post("/api/transcribe")
 def transcribe_upload(file: UploadFile = File(...), language: str = Form("")):
-    """口述转文字：只返回文字，不保留音频。"""
+    """Dictation: return the text only, don't keep the audio."""
     src = voice.save_upload(file, config.DATA_DIR / "_tmp", _tmp_name("dictate"))
 
     def work(job: jobs.Job):
@@ -833,7 +833,7 @@ def transcribe_upload(file: UploadFile = File(...), language: str = Form("")):
 def step_voice_upload(pid: str, sid: str, file: UploadFile = File(...),
                       transcribe: bool = Form(True), replace_text: bool = Form(True),
                       language: str = Form("")):
-    """录音或上传的音频设为这一步的配音。"""
+    """Use the recorded or uploaded audio as this step's voice-over."""
     _step_or_404(_need(pid), sid)
     src = voice.save_upload(file, storage.work_dir(pid), _tmp_name(f"voice_{sid}"))
 
@@ -842,7 +842,7 @@ def step_voice_upload(pid: str, sid: str, file: UploadFile = File(...),
             before, proj = _snapshot(pid)
             r = voice.set_step_voice(proj, _step_or_404(proj, sid), src, transcribe,
                                      replace_text, language, job.progress)
-            # 录音是你明确上传的，音频无条件写回；文字只在你这段时间没改过时才替换
+            # the recording was uploaded on purpose, so the audio is always written back; the text is only replaced if you didn't edit it meanwhile
             storage.commit(pid, before, proj, step_fields=("narration", "caption") + AUDIO,
                            force_audio=True)
             return r
@@ -853,7 +853,7 @@ def step_voice_upload(pid: str, sid: str, file: UploadFile = File(...),
 
 @app.post("/api/projects/{pid}/steps/{sid}/voice/ai")
 def step_voice_to_ai(pid: str, sid: str):
-    """保留文字，改由 AI 朗读。"""
+    """Keep the text and let the AI read it."""
     _need(pid)
     storage.update(pid, lambda p: voice.switch_to_ai(p, _step_or_404(p, sid)))
     return {"ok": True}
@@ -896,7 +896,7 @@ def remove_all_voice(pid: str):
 @app.post("/api/projects/{pid}/magic-mic")
 def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = Form(...),
                      mode: str = Form("ai"), language: str = Form("")):
-    """边录边讲：扩展停止录制时上传整段录音，这里识别并按操作时间切给每一步。"""
+    """Narrate while recording: the extension uploads the whole recording when recording stops; transcribe it and split it across the steps by action time."""
     _need(pid)
     src = voice.save_upload(file, storage.work_dir(pid), _tmp_name("session"))
 
@@ -920,7 +920,7 @@ def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = 
     return _submit("magic_mic", work, pid)
 
 
-# ---- PPT / PDF 转视频 --------------------------------------------------------
+# ---- PPT / PDF to video -------------------------------------------------------
 
 @app.post("/api/import/slides")
 def slides_upload(file: UploadFile = File(...)):
@@ -969,7 +969,7 @@ def slides_create(iid: str, req: SlidesCreateReq):
     return jobs.submit("slides_create", work)
 
 
-# ---- 片头 / 片尾 ----------------------------------------------------------
+# ---- intro / outro ----------------------------------------------------------
 
 @app.get("/api/projects/{pid}/card/{kind}/preview")
 def card_preview(pid: str, kind: str, t: float = 1.2, scale: float = 0.5):
@@ -991,7 +991,7 @@ def _card_kind(kind: str) -> str:
 
 @app.post("/api/projects/{pid}/card/{kind}/background")
 def card_background_upload(pid: str, kind: str, file: UploadFile = File(...)):
-    """片头 / 片尾换成自己的背景：一张图片，或 PPT / PDF 的某一页（PPT 要转换，走后台任务）。"""
+    """Use your own intro / outro background: an image or one page of a PPT / PDF (PPT needs conversion, done as a background job)."""
     import shutil
     _card_kind(kind)
     _need(pid)
@@ -1017,13 +1017,13 @@ def card_background_upload(pid: str, kind: str, file: UploadFile = File(...)):
         def _do(p: Project):
             style = getattr(p, f"{kind}_card")
             old["style"] = style.model_copy()
-            duration = style.duration                     # 停留时间是用户设的，换图不重置
+            duration = style.duration                     # the display time was set by the user; changing the image doesn't reset it
             setattr(p, f"{kind}_card", CardStyle(**fields, duration=duration))
         storage.update(pid, _do)
         cards.remove_folder(pid, old.get("style"))
         job.progress(1.0, i18n.t("背景已更新"))
         return getattr(_need(pid), f"{kind}_card").model_dump()
-    # 正在渲染时换背景，渲染到一半的片头片尾会拿不到图：先等渲染完
+    # Changing the background during a render would leave the half-rendered intro / outro without an image: wait for the render first
     try:
         return _submit("card_bg", work, pid, exclusive={"render", "auto"})
     except HTTPException:
@@ -1033,7 +1033,7 @@ def card_background_upload(pid: str, kind: str, file: UploadFile = File(...)):
 
 @app.patch("/api/projects/{pid}/card/{kind}")
 def card_options(pid: str, kind: str, body: Dict[str, Any] = Body(...)):
-    """片头 / 片尾：换页、放置方式、是否叠字、停留时间。"""
+    """Intro / outro: page, fit, text overlay, display time."""
     _card_kind(kind)
     _need(pid)
     err: Dict[str, str] = {}
@@ -1051,7 +1051,7 @@ def card_options(pid: str, kind: str, body: Dict[str, Any] = Body(...)):
 
 @app.delete("/api/projects/{pid}/card/{kind}/background")
 def card_background_remove(pid: str, kind: str):
-    """恢复默认背景（停留时间保留）。"""
+    """Restore the default background (the display time is kept)."""
     _card_kind(kind)
     _need(pid)
     old: Dict[str, Any] = {}
@@ -1083,13 +1083,13 @@ def card_tts(pid: str, kind: str, body: Dict[str, Any] = Body(default={})):
 
 @app.post("/api/tts/preview")
 def tts_preview(body: Dict[str, Any] = Body(default={})):
-    """试听音色：合成一小段示例，不碰任何项目数据。"""
+    """Voice preview: synthesise a short sample without touching any project data."""
     voice = body.get("voice") or config.get("voice")
     text = (body.get("text") or "").strip()[:200]
     if not text:
         loc = (tts_cloud.voice_info(voice).get("locale", "zh") if tts_cloud.is_cloud(voice)
                else voice.split("-")[0] if voice else "en").split("-")[0]
-        # 试听句用音色本身的语言（和界面语言无关）
+        # the preview sentence is in the voice's own language (independent of the interface language)
         text = {
             "zh": "你好，这是当前音色的试听效果。",  # i18n: ignore
             "ja": "こんにちは、これは音声のサンプルです。",  # i18n: ignore
@@ -1146,7 +1146,7 @@ def tts_preview(body: Dict[str, Any] = Body(default={})):
                         background=BackgroundTask(lambda: path.unlink(missing_ok=True)))
 
 
-# ---- 生成任务 ------------------------------------------------------------
+# ---- generation jobs ------------------------------------------------------
 
 @app.post("/api/projects/{pid}/script")
 def gen_script(pid: str, req: ScriptReq):
@@ -1177,11 +1177,11 @@ def gen_translate(pid: str, req: TranslateReq):
 
     def work(job: jobs.Job):
         before, proj = _snapshot(pid)
-        if req.apply:     # 幻灯片项目按 PPT 原文重写，网页录制的项目翻译
+        if req.apply:     # slide projects are rewritten from the deck, recorded projects are translated
             res = script_gen.switch_language(proj, req.target_language, progress=job.progress, voice=req.voice)
         else:
             res = script_gen.translate_project(proj, req.target_language, apply=False, progress=job.progress)
-        if req.apply and not proj.is_dialogue():        # 双人问答的音色在 switch_language 里跟讲者一起换好了
+        if req.apply and not proj.is_dialogue():        # in Q&A mode switch_language already changed the voices together with the speakers
             proj.voice = req.voice or tts.default_voice(req.target_language)
         storage.commit(pid, before, proj, step_fields=STEP_TEXT + AUDIO,
                        project_fields=CARD + ("language", "voice", "translations", "speakers"))
@@ -1205,8 +1205,8 @@ def gen_tts(pid: str, req: TTSReq):
 
 
 def _align_reveal(pid: str, job: jobs.Job, lo: float, hi: float) -> None:
-    """渲染前：解说变过的幻灯片页，让 AI 标出每一条在解说第几句开始讲（跨语言、意译都能对上）。
-    解说没变的页直接用上次的结果；没配 AI 或 AI 出错就跳过，渲染时按原文匹配。"""
+    """Before rendering: for slides whose narration changed, let the AI mark which narration sentence starts each item (works across languages and paraphrases).
+    Slides with unchanged narration reuse the previous result; without AI, or on AI errors, this is skipped and rendering matches the text instead."""
     from .services import slide_reveal
     _, proj = _snapshot(pid)
     steps = [s for s in proj.steps if s.include]
@@ -1215,7 +1215,7 @@ def _align_reveal(pid: str, job: jobs.Job, lo: float, hi: float) -> None:
     try:
         res = slide_reveal.align_steps(steps, progress=lambda f, m: job.progress(lo + f * (hi - lo), m),
                                        label=lambda i, n: i18n.t("对齐解说和页面内容 {i}/{n}", i=i, n=n))
-    except Exception:  # noqa: BLE001 —— 对齐只是让时机更准，失败照常渲染（点了停止是 JobCancelled，不在这里吞掉）
+    except Exception:  # noqa: BLE001 — alignment only improves timing; on failure render anyway (Stop raises JobCancelled, which isn't swallowed here)
         return
     if not res:
         return
@@ -1253,14 +1253,14 @@ def gen_video(pid: str, req: RenderReq):
 
 @app.post("/api/projects/{pid}/auto")
 def auto_pipeline(pid: str, body: Dict[str, Any] = Body(default={})):
-    """一键：生成脚本 -> 合成语音 -> 渲染视频。"""
+    """One click: write the script -> voice-over -> render the video."""
     _need(pid)
     style = body.get("style", "friendly")
     overwrite = bool(body.get("overwrite", False))
 
     def work(job: jobs.Job):
         out: Dict[str, Any] = {}
-        # 每一阶段都重新取快照：阶段之间你在编辑器里做的改动（比如取消勾选某步）会被下一阶段看到
+        # take a fresh snapshot for every stage: changes made in the editor between stages (e.g. unticking a step) are seen by the next stage
         job.progress(0.02, i18n.t("第 1/3 步：生成解说脚本"))
         before, proj = _snapshot(pid)
         out["script"] = script_gen.generate_script(
@@ -1287,17 +1287,17 @@ def auto_pipeline(pid: str, body: Dict[str, Any] = Body(default={})):
     return _submit("auto", work, pid, exclusive=jobs.HEAVY)
 
 
-# ---- 第二语言字幕（外挂） -------------------------------------------------------
+# ---- second-language subtitles (external) --------------------------------------
 
 @app.get("/api/projects/{pid}/subtitles2")
 def subtitles2_state(pid: str):
-    """当前成片的主字幕情况，和已经生成的第二语言字幕（过期的标出来）。"""
+    """Main subtitle status of the current video and the generated second-language subtitles (outdated ones marked)."""
     return second_subs.state(_need(pid))
 
 
 @app.post("/api/projects/{pid}/subtitles2")
 def subtitles2_generate(pid: str, body: Dict[str, Any] = Body(default={})):
-    """给当前成片生成一种或几种第二语言字幕（AI 翻译）。"""
+    """Generate one or more second-language subtitles for the current video (AI translation)."""
     proj = _need(pid)
     langs = [str(x) for x in body.get("languages") or [] if str(x) in script_gen.LANG_NAMES and str(x) != proj.language]
     if not langs:
@@ -1315,7 +1315,7 @@ def subtitles2_generate(pid: str, body: Dict[str, Any] = Body(default={})):
 
 @app.get("/api/projects/{pid}/subtitles2/{lang}")
 def subtitles2_cues(pid: str, lang: str):
-    """一种第二语言字幕的时间轴（编辑器里预览用）。"""
+    """The timeline of one second-language subtitle (for the editor preview)."""
     return {"cues": second_subs.track_cues(_need(pid), lang)}
 
 
@@ -1328,7 +1328,7 @@ def subtitles2_delete(pid: str, lang: str):
 
 @app.get("/api/projects/{pid}/export/player")
 def export_player(pid: str):
-    """网页播放包（zip）：视频 + 第二语言字幕 + 播放页，放进公司网站目录里就能看、能选第二字幕。"""
+    """Web player package (zip): video + second-language subtitles + player page; drop it into a folder of your website to watch with selectable subtitles."""
     proj = _need(pid)
     try:
         path = second_subs.export_package(proj)
@@ -1339,7 +1339,7 @@ def export_player(pid: str):
                         background=BackgroundTask(lambda: path.unlink(missing_ok=True)))
 
 
-# ---- 任务查询 ------------------------------------------------------------
+# ---- job status ------------------------------------------------------------
 
 @app.get("/api/jobs/{jid}")
 def get_job(jid: str):
@@ -1351,7 +1351,7 @@ def get_job(jid: str):
 
 @app.post("/api/jobs/{jid}/cancel")
 def cancel_job(jid: str):
-    """停止任务。已经完成的阶段会保留（比如解说已写好、部分步骤已配音），可以修改后重新生成。"""
+    """Stop a job. Completed stages are kept (e.g. narration written, some steps voiced), so you can edit and generate again."""
     j = jobs.cancel(jid)
     if not j:
         raise HTTPException(404, i18n.t("任务不存在"))
@@ -1363,13 +1363,13 @@ def list_jobs(project_id: str = Query("")):
     return {"jobs": jobs.list_jobs(project_id)}
 
 
-# ---- 文件 ---------------------------------------------------------------
+# ---- files -------------------------------------------------------------------
 
 _KIND_DIR = {
     "screenshots": storage.screenshots_dir,
     "audio": storage.audio_dir,
     "output": storage.output_dir,
-    "media": clips.media_dir,          # 视频步骤的视频（编辑器里预览播放）
+    "media": clips.media_dir,          # videos of video steps (played in the editor preview)
 }
 
 
@@ -1383,19 +1383,19 @@ def get_file(pid: str, kind: str, name: str, download: bool = False):
     path = (base / name).resolve()
     if not path.is_relative_to(base) or not path.is_file():
         raise HTTPException(404, i18n.t("文件不存在"))
-    # 截图按步骤 id 命名、永不改变，可以长缓存；配音和成片会用同名文件覆盖，必须每次校验
+    # screenshots are named by step id and never change, so they can be cached long; voice-overs and videos are overwritten in place and must be revalidated
     headers = {"Cache-Control": "public, max-age=604800, immutable" if kind == "screenshots"
                else "no-cache"}
     if download:
-        # 文件名常是中文（视频标题）。HTTP 头只能放 latin-1，直接写会 500；
-        # 交给 FileResponse 按 RFC 5987 编码成 filename*=utf-8''…，浏览器能还原成原名
+        # File names are often Chinese (video titles). HTTP headers only allow latin-1, so writing them directly gives a 500;
+        # FileResponse encodes them as filename*=utf-8''… (RFC 5987), which browsers decode back to the original name
         return FileResponse(path, headers=headers, filename=path.name, content_disposition_type="attachment")
     return FileResponse(path, headers=headers)
 
 
 @app.get("/api/projects/{pid}/export/markdown", response_class=PlainTextResponse)
 def export_markdown(pid: str):
-    """导出图文版操作文档（可粘进飞书/Notion/Confluence）。"""
+    """Export a how-to document with images (can be pasted into any wiki or document tool)."""
     proj = _need(pid)
     port = config.get("server_port")
     lines = [f"# {proj.title or proj.name}", ""]
@@ -1410,7 +1410,7 @@ def export_markdown(pid: str):
         n += 1
         head = s.title or i18n.t("步骤 {n}", _lang=i18n.content_lang(proj.language), n=n)
         lines.append(f"## {n}. {head}")
-        text = s.caption if s.plays_clip_audio() else s.narration     # 播原声的视频：写视频里讲的话
+        text = s.caption if s.plays_clip_audio() else s.narration     # videos with their own sound: write what is said in the video
         if s.lines and proj.is_dialogue():
             names = {sp.role: sp.name for sp in dialogue.ensure_speakers(proj)}
             lines += [f"**{names.get(ln.who, ln.who)}**：{ln.text}  " for ln in s.lines if ln.text.strip()]
@@ -1428,7 +1428,7 @@ def export_markdown(pid: str):
 
 @app.get("/api/projects/{pid}/export/script")
 def export_script(pid: str):
-    """导出可编辑的纯文本脚本。"""
+    """Export an editable plain-text script."""
     proj = _need(pid)
     out = {
         "title": proj.title, "subtitle": proj.subtitle,
@@ -1444,7 +1444,7 @@ def export_script(pid: str):
 
 @app.post("/api/projects/{pid}/import/script")
 def import_script(pid: str, body: Dict[str, Any] = Body(...)):
-    """导入外部编辑过的脚本 JSON。"""
+    """Import a script JSON edited elsewhere."""
     def _do(p: Project):
         for k in ("title", "subtitle", "intro", "outro"):
             if k in body:
@@ -1454,13 +1454,13 @@ def import_script(pid: str, body: Dict[str, Any] = Body(...)):
             item = by_index.get(s.index)
             if not item:
                 continue
-            if isinstance(item.get("lines"), list) and item["lines"]:      # 双人问答的台词
+            if isinstance(item.get("lines"), list) and item["lines"]:      # Q&A lines
                 item = {**item, "narration": join_lines([DialogueLine(**x) for x in dialogue.normalize_lines(item["lines"])])}
                 s.lines = [DialogueLine(**x) for x in dialogue.normalize_lines(item["lines"])]
             if "narration" in item and (item["narration"] or "") != (s.narration or ""):
                 s.narration = item["narration"] or ""
                 drop_stale_lines(s)
-                if s.voice_source != "own":          # 原声步骤改文字只是修字幕，录音保留
+                if s.voice_source != "own":          # for own-voice steps a text edit only fixes the subtitle; the recording is kept
                     s.audio = ""
                     s.audio_duration = 0.0
                     s.boundaries = []
@@ -1471,7 +1471,7 @@ def import_script(pid: str, body: Dict[str, Any] = Body(...)):
     return _public(_need(pid))
 
 
-# ---- 静态资源 ------------------------------------------------------------
+# ---- static files -----------------------------------------------------------
 
 if config.STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(config.STATIC_DIR)), name="static")
@@ -1482,7 +1482,7 @@ def _startup():
     config.ensure_dirs()
 
     def _cleanup():
-        # 导入的 PPT / PDF 以前只在下一次导入时才清理，不再导入就一直占着空间（几百 MB）
+        # imported PPT / PDF files used to be cleaned up only at the next import, so without another import they kept taking space (hundreds of MB)
         slides.cleanup_old_imports()
         storage.cleanup_temp()
     import threading

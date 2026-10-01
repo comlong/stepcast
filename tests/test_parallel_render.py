@@ -1,4 +1,4 @@
-"""并行渲染出来的画面必须和串行一模一样（光标起点是我改过的地方）。"""
+"""Parallel rendering must produce exactly the same frames as serial rendering (the cursor start point is what changed)."""
 import os, shutil, subprocess, sys, time
 from pathlib import Path
 SP = Path(sys.argv[1]); DATA = SP / "verify_projects"
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from backend import config
 config.CONFIG_PATH = DATA / "config.json"; config._cache = None
-from fixtures_build import make_capture_project  # 假的网页录制项目，不用真实项目
+from fixtures_build import make_capture_project  # a fake recorded project instead of a real one
 PID = make_capture_project(DATA)
 from backend import storage
 from backend.services import video as V
@@ -24,7 +24,7 @@ for tag, workers in (("串行", 1), ("并行", 4)):
     dst = SP / f"verify_{tag}.mp4"; shutil.copyfile(src, dst); outs[tag] = dst
     print(f"{tag}（{workers} 线程）: {time.time()-t0:5.1f}s  成品 {dst.stat().st_size/1e6:.2f}MB")
 
-# 抽帧逐像素比对
+# extract frames and compare pixel by pixel
 bad = 0
 for t in [x for x in (1.0, 4.0, 9.0, 18.0, 30.0, 45.0, 60.0, 66.0) if x < r["duration"] - 0.5]:
     pngs = []

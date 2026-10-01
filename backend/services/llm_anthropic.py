@@ -1,4 +1,4 @@
-"""Anthropic Claude（官方 SDK）。"""
+"""Anthropic Claude (official SDK)."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -8,10 +8,10 @@ from .llm import LLMError, Resolved, parse_json, run_cancellable
 
 try:
     import anthropic
-except ImportError:  # 老环境没装
+except ImportError:  # not installed in old environments
     anthropic = None
 
-# 这些模型的安全分类器偶尔会拒绝请求；开启服务端兜底后，被拒的请求会自动换一个模型重跑
+# The safety classifiers of these models occasionally refuse requests; with server-side fallback on, refused requests are rerun on another model automatically
 FALLBACK_MODELS = {"claude-opus-5", "claude-fable-5-1"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
@@ -25,16 +25,16 @@ class AnthropicClient:
         self.provider = r.preset.id
         self.name = i18n.t(r.preset.name)
         self.model = r.model
-        # 没填 Key 时交给 SDK 自己找（ANTHROPIC_API_KEY 等）
+        # without a key, let the SDK find one itself (ANTHROPIC_API_KEY etc.)
         self.client = anthropic.Anthropic(api_key=r.api_key or None, base_url=r.base_url or None,
                                           max_retries=2, timeout=600)
 
     def chat(
         self,
         messages: List[Dict[str, str]],
-        temperature: float = 0.6,       # 新模型不接受采样参数，统一不发
+        temperature: float = 0.6,       # newer models don't accept sampling parameters, so none are sent
         json_mode: bool = False,
-        max_tokens: int = 8000,         # 思考也占输出额度，统一给足，实际按用量计费
+        max_tokens: int = 8000,         # thinking also counts towards output, so give plenty; billing is by actual usage
         timeout: int = 180,
         retries: int = 2,
     ) -> str:
@@ -57,7 +57,7 @@ class AnthropicClient:
                 ctx = self.client.messages.stream(**params)
             with ctx as stream:
                 for _ in stream:
-                    if stop.is_set():       # 用户点了停止：关掉连接，不再生成、不再计费
+                    if stop.is_set():       # the user clicked Stop: close the connection, no more generation or billing
                         return None
                 return stream.get_final_message()
 
@@ -77,7 +77,7 @@ class AnthropicClient:
             raise LLMError(i18n.t("Claude 返回 {status}：{error}", status=e.status_code, error=e.message))
         except anthropic.APIConnectionError:
             raise LLMError(i18n.t("连不上 Claude（网络问题），请检查网络或代理。"))
-        except anthropic.AnthropicError as e:      # 例如没有任何可用的凭据
+        except anthropic.AnthropicError as e:      # e.g. no usable credentials at all
             raise LLMError(i18n.t("调用 Claude 失败：{error}", error=e))
 
         if msg.stop_reason == "refusal":
@@ -91,7 +91,7 @@ class AnthropicClient:
         return parse_json(self.chat(messages, json_mode=True, **kw))
 
     def ping(self) -> str:
-        """只查模型信息：能验证 Key 和模型名，不花 token。"""
+        """Only query model information: verifies the key and model name without spending tokens."""
         try:
             m = self.client.models.retrieve(self.model)
         except anthropic.AuthenticationError:

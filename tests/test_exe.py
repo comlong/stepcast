@@ -1,4 +1,4 @@
-"""测试打包好的 exe（不是源码）：放到带中文和空格的目录里跑一遍主要功能。"""
+"""Test the packaged exe (not the source): run the main features from a folder with Chinese characters and spaces in its path."""
 import json
 import os
 import re
@@ -12,7 +12,7 @@ from pathlib import Path
 import requests
 
 SP = Path(sys.argv[1])
-SRC = Path(__file__).resolve().parents[1] / "dist" / "StepCast"   # 打包出来的 exe 文件夹
+SRC = Path(__file__).resolve().parents[1] / "dist" / "StepCast"   # the packaged exe folder
 ROOT = SP / "exe 测试" / "StepCast"
 PORT = 8766
 B = f"http://127.0.0.1:{PORT}"
@@ -38,7 +38,7 @@ def wait_job(j, timeout=600):
 
 def exe_env():
     env = {k: v for k, v in os.environ.items() if not k.startswith(("VT_", "PYTHON", "VIRTUAL_ENV"))}
-    # 去掉 PATH 里的 ffmpeg 和 Python，模拟同事的电脑：只能用包里自带的
+    # remove ffmpeg and Python from PATH to simulate a colleague's computer: only the bundled ones can be used
     keep = [p for p in env.get("PATH", "").split(os.pathsep)
             if p and not (Path(p) / "ffmpeg.exe").exists() and not (Path(p) / "python.exe").exists()]
     env["PATH"] = os.pathsep.join(keep)
@@ -129,8 +129,8 @@ try:
     import zipfile as _zip
     names = _zip.ZipFile(_io.BytesIO(pk.content)).namelist() if pk.ok else []
     check("网页播放包能下载（播放页 + 视频）", "index.html" in names and p["output"] in names, (pk.status_code, names))
-    # 视频时长必须和各步时长对得上：包里自带的 ffmpeg 7.1 不认 -shortest，
-    # 以前会一直往后补静音，1 分钟的视频能变成一个多小时
+    # the video length must match the step durations: the bundled ffmpeg 7.1 doesn't honour -shortest,
+    # which used to keep appending silence and turned a one-minute video into more than an hour
     plan = sum(s["duration"] for s in p["steps"] if s.get("include", True) and s.get("duration"))
     r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=nw=1:nk=1", str(mp4)], capture_output=True, text=True)

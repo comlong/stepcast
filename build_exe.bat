@@ -2,7 +2,7 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
-rem 打包成可以发给同事的 Windows 版本：dist\StepCast\StepCast.exe 和 dist\StepCast-版本-win64.zip
+rem Build the Windows version to share with colleagues: dist\StepCast\StepCast.exe and dist\StepCast-<version>-win64.zip
 
 if not exist .venv\Scripts\python.exe (
   echo [X] .venv not found. Run setup.bat first.

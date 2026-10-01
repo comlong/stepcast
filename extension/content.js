@@ -1,5 +1,5 @@
-/* StepCast 录制器 — 内容脚本
- * 监听页面上的点击 / 输入 / 回车，抽取元素信息后交给 background 截图上报。
+/* StepCast recorder — content script
+ * Listens for clicks / input / Enter on the page, extracts element information and hands it to the background for screenshot and report.
  */
 (() => {
   if (window.__vtInjected) return;
@@ -16,7 +16,7 @@
   let stepCount = 0;
   let lastSentAt = 0;
   let lastSig = '';
-  const committed = new WeakMap();     // 输入框 -> 已经记录过的值，避免同一次输入记两遍
+  const committed = new WeakMap();     // input -> value already recorded, so one input isn't recorded twice
   let overlay = null;
   let overlayHidden = false;
   let cfg = { autoRedact: true, indexText: true, keywords: [] };
@@ -29,7 +29,7 @@
       .split(/[,，\n]/).map(x => x.trim()).filter(x => x.length > 1);
   }
 
-  /* ---------- 元素描述 ---------- */
+  /* ---------- element description ---------- */
 
   function cssPath(el) {
     if (!el || el.nodeType !== 1) return '';
@@ -118,7 +118,7 @@
     const r = hit.getBoundingClientRect();
     const area = r.width * r.height;
     const vp = window.innerWidth * window.innerHeight;
-    // 命中的是个超大容器时，还是用原始元素更准
+    // if the hit is a huge container, the original element is more accurate
     if (area > vp * 0.55) return node;
     return hit;
   }
@@ -144,7 +144,7 @@
     return v.replace(/\s+/g, ' ').trim().slice(0, 120);
   }
 
-  /* ---------- 敏感信息识别 ---------- */
+  /* ---------- sensitive data detection ---------- */
 
   const RX = [
     ['email', /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g],
@@ -161,7 +161,7 @@
   const MAX_NODES = 400;
   const MAX_LEN = 160;
 
-  /** 这个文字节点是否落在「姓名」那一列里 —— 表头判断，比猜姓氏准得多 */
+  /** Whether this text node lies in a "name" column — judged by the table header, far more accurate than guessing surnames */
   function inNameColumn(el) {
     const td = el && el.closest && el.closest('td');
     if (!td) return false;
@@ -180,7 +180,7 @@
       const r = document.createRange();
       r.setStart(node, start);
       r.setEnd(node, end);
-      return Array.from(r.getClientRects());   // 跨行会返回多个矩形
+      return Array.from(r.getClientRects());   // text spanning lines returns several rectangles
     } catch (e) { return []; }
   }
 
@@ -225,7 +225,7 @@
     }
   }
 
-  /** 遍历可见文字，返回 { nodes: 文字索引, hits: 自动打码框 } */
+  /** Walk the visible text; returns { nodes: text index, hits: automatic redaction boxes } */
   function scanPage() {
     const nodes = [];
     const hits = [];
@@ -268,7 +268,7 @@
       if (cfg.autoRedact) pushHits(hits, n, text, nameCol);
     }
 
-    // 输入框 / 下拉框里的值不是文字节点，单独过一遍
+    // values of inputs / selects aren't text nodes; go through them separately
     if (cfg.autoRedact) {
       for (const el of document.querySelectorAll('input,textarea,select')) {
         const v = el.tagName === 'SELECT'
@@ -297,18 +297,18 @@
     return { nodes, hits };
   }
 
-  /* ---------- 上报 ---------- */
+  /* ---------- reporting ---------- */
 
   function send(kind, el, point, value) {
     if (!recording) return;
-    const now = Date.now();                   // 点击发生的时刻，边录边讲靠它对齐语音
+    const now = Date.now();                   // moment of the click; narrate-while-recording aligns the speech by it
     const sig = kind + '|' + (el ? cssPath(el) : '') + '|' + (value || '');
-    if (sig === lastSig && now - lastSentAt < 400) return;   // 只去掉双击这类同元素重复
+    if (sig === lastSig && now - lastSentAt < 400) return;   // only drop same-element repeats such as double clicks
     lastSig = sig;
     lastSentAt = now;
-    // 必须在这里同步扫描：点击之后页面可能就跳走了
+    // scan synchronously here: the page may navigate away right after the click
     let scan = { nodes: [], hits: [] };
-    try { scan = scanPage(); } catch (e) { /* 页面结构异常也别挡住录制 */ }
+    try { scan = scanPage(); } catch (e) { /* a broken page structure must not block recording */ }
     const evt = {
       kind,
       url: location.href,
@@ -325,7 +325,7 @@
     };
     try {
       chrome.runtime.sendMessage({ type: 'vt_event', event: evt }, () => void chrome.runtime.lastError);
-    } catch (e) { /* 扩展刚重载 */ }
+    } catch (e) { /* extension was just reloaded */ }
   }
 
   function isOurs(node) {
@@ -349,7 +349,7 @@
     return el.value || '';
   }
 
-  /** 输入框内容和上次记录的不一样，就记一个「输入」步骤。 */
+  /** If an input's content differs from the last recorded value, record an "input" step. */
   function commitInput(el) {
     if (!recording || !isTextField(el) || isOurs(el)) return false;
     const v = fieldValue(el);
@@ -361,7 +361,7 @@
     return true;
   }
 
-  /* ---------- 事件监听 ---------- */
+  /* ---------- event listeners ---------- */
 
   document.addEventListener('focusin', (e) => {
     const el = e.target;
@@ -381,23 +381,23 @@
   document.addEventListener('change', (e) => {
     if (!recording || isOurs(e.target)) return;
     const t = (e.target.type || '').toLowerCase();
-    if (t === 'checkbox' || t === 'radio') return;          // 这些靠 click 记录
+    if (t === 'checkbox' || t === 'radio') return;          // these are recorded via click
     commitInput(e.target);
   }, true);
 
   document.addEventListener('keydown', (e) => {
     if (!recording || isOurs(e.target)) return;
-    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;   // 输入法选词的回车不算
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;   // Enter that confirms an IME candidate doesn't count
     const el = e.target;
     if (!isTextField(el) || el.tagName === 'SELECT') return;
-    // 多行文本框里单按回车是换行，Ctrl/⌘+回车才算提交
+    // in a multi-line text box a plain Enter is a line break; only Ctrl/⌘+Enter submits
     if ((el.tagName === 'TEXTAREA' || el.isContentEditable) && !(e.ctrlKey || e.metaKey)) return;
     commitInput(el);
     const r = rectOf(el);
     send('key', el, r ? { x: r.x + r.w / 2, y: r.y + r.h / 2 } : null, 'Enter');
   }, true);
 
-  /* ---------- 录制浮层（截图时会自动隐藏） ---------- */
+  /* ---------- recording overlay (hidden automatically for screenshots) ---------- */
 
   function ensureOverlay() {
     if (overlay && document.body.contains(overlay)) return overlay;
@@ -411,7 +411,7 @@
       <button class="vt-btn vt-stop" id="vt-stop"></button>
     `;
     labelOverlay(overlay);
-    // 译文由 background 给（内容脚本读不到扩展里的文件），拿到后重新贴一次文字
+    // translations come from the background (content scripts can't read the extension's files); re-apply the text once received
     chrome.runtime.sendMessage({ type: 'vt_i18n' }, (r) => {
       if (chrome.runtime.lastError || !r || !r.lang) return;
       VTI18N.use(r.lang, r.dict);
@@ -477,7 +477,7 @@
     return true;
   });
 
-  // 打开页面时同步一次状态
+  // sync the state once when the page opens
   try {
     chrome.runtime.sendMessage({ type: 'vt_state' }, (s) => {
       if (chrome.runtime.lastError || !s) return;

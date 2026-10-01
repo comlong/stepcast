@@ -1,6 +1,6 @@
-"""手工看第二语言字幕效果：用假的网页录制项目渲染视频，生成英语（斜体）和繁体中文（正体）两种第二字幕
-（手写译文，不花 AI 额度），解开网页播放包。数据放在 tests/_work/ui_data（ui-test 服务能直接打开），
-播放包在 tests/_work/pkg（.claude/launch.json 的 pkg）。
+"""Look at second-language subtitles by hand: render a video from the fake recorded project, generate English (italic) and Traditional Chinese (upright) second subtitles
+(hand-written translations, no AI credits) and unpack the web player package. Data goes to tests/_work/ui_data (the ui-test server opens it directly),
+the package to tests/_work/pkg (pkg in .claude/launch.json).
 
     .venv\\Scripts\\python.exe -X utf8 tests\\demo_sub2.py
 """
@@ -45,7 +45,7 @@ TW = {"这段演示": "這段示範帶你在示例後台裡新建一個機構，
 
 
 class Hand:
-    """假翻译：按句子开头查手写的译文。"""
+    """Fake translation: look up the hand-written translation by the start of the sentence."""
 
     def chat_json(self, messages, **k):
         u = messages[-1]["content"]

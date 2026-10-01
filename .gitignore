@@ -9,17 +9,17 @@ projects/
 *.log
 .DS_Store
 
-# 打包产物
+# build output
 build/
 dist/
 
-# 工具和缓存
+# tools and caches
 .ruff_cache/
 .claude/
 models/
 packaging/icon.ico
 
-# 测试：工作目录和内部资料不提交；测试素材（mp3/mp4）要提交
+# tests: work folders and internal material are not committed; test fixtures (mp3/mp4) are
 tests/_work/
 tests/private/
 !tests/fixtures/**

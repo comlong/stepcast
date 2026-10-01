@@ -1,10 +1,10 @@
-"""测试用服务：独立的数据目录和配置文件，不碰用户自己的项目和 config.json，也不调用本机 PowerPoint。
+"""Test server: separate data folder and settings file, never touches the user's projects or config.json and never calls the local PowerPoint.
 
-VT_SLOW_SETTINGS=1 时把「读设置」接口故意拖慢 0.8 秒，复现「语言列表先到、设置后到」的时序。
+With VT_SLOW_SETTINGS=1 the "read settings" endpoint is delayed by 0.8 s on purpose, to reproduce "language list first, settings later".
 """
 import asyncio, os, sys
 from pathlib import Path
-SP = Path(__file__).parent / "_work"   # 数据放在 tests/_work/ui_data（不提交）
+SP = Path(__file__).parent / "_work"   # data lives in tests/_work/ui_data (not committed)
 os.environ["VT_DATA_DIR"] = str(SP / "ui_data")
 os.environ["VT_DISABLE_POWERPOINT"] = "1"
 ROOT = Path(__file__).resolve().parents[1]

@@ -1,4 +1,4 @@
-"""这轮检查修掉的问题：音色跟语言对不上、临时文件清理、健康检查缓存、截图文件句柄。全部在临时目录里做。"""
+"""Fixes from this review: voice not matching the language, temp file cleanup, health check cache, screenshot file handles. Everything runs in a temp folder."""
 import os, shutil, sys, time
 from pathlib import Path
 SP = Path(sys.argv[1]); DATA = SP / "review_data"
@@ -57,6 +57,6 @@ from backend.services.renderer import StepRenderer, Theme
 shot = DATA / "shot.png"; Image.new("RGB", (800, 600), (200, 200, 200)).save(shot)
 s = Step(kind="click", point={"x": 100, "y": 100}, viewport_w=800, img_w=800)
 pt = StepRenderer.click_point(s, shot, Theme(width=1280, height=720))
-shot.unlink()                                   # Windows 上文件还被占着的话这里会报错
+shot.unlink()                                   # on Windows this fails if the file is still held open
 check("算完点击点后截图文件没被占着（能删掉）", not shot.exists() and pt is not None, pt)
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))

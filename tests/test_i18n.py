@@ -1,4 +1,4 @@
-"""界面语言：自动选择、老用户、切换、后端提示、内容语言、页面无残留中文、扩展词典。"""
+"""Interface language: automatic choice, existing users, switching, backend messages, content language, no leftover Chinese on the page, extension dictionary."""
 import json
 import os
 import re
