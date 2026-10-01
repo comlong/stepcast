@@ -23,3 +23,4 @@ packaging/icon.ico
 tests/_work/
 tests/private/
 !tests/fixtures/**
+tests/fixtures/**/__pycache__/
