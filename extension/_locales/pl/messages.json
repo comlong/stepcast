@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Rejestrator StepCast"
+  },
+  "extDescription": {
+    "message": "Nagrywaj działania w przeglądarce i zamieniaj je w filmy instruktażowe z narracją, lektorem i napisami."
+  },
+  "cmdToggle": {
+    "message": "Rozpocznij / zatrzymaj nagrywanie"
+  },
+  "cmdCapture": {
+    "message": "Dodaj ręcznie krok ze zrzutem ekranu"
+  }
+}

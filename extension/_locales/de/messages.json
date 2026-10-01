@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "StepCast Recorder"
+  },
+  "extDescription": {
+    "message": "Browser-Aktionen aufnehmen und daraus Lernvideos mit Erklärtext, Sprachausgabe und Untertiteln erstellen."
+  },
+  "cmdToggle": {
+    "message": "Aufnahme starten / beenden"
+  },
+  "cmdCapture": {
+    "message": "Screenshot-Schritt manuell hinzufügen"
+  }
+}

@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StepCast 编辑器</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23ff5c39'/><path d='M12 10l10 6-10 6z' fill='white'/></svg>">
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="logo"><span class="mark">▶</span> StepCast</div>
+    <input type="text" id="projName" placeholder="教程名称">
+    <button class="sm" id="btnProjects">项目 ▾</button>
+    <div class="grow"></div>
+    <span class="badge" id="badgeRec"></span>
+    <span class="badge" id="badgeFF">ffmpeg</span>
+    <span class="badge" id="badgeAI">AI 模型</span>
+    <select id="uiLang" class="lang-select" title="界面语言 / Language"></select>
+    <button class="sm" id="btnSettings">⚙ 设置</button>
+  </header>
+
+  <div id="main">
+
+    <aside id="steps">
+      <div class="pane-head">
+        <span>步骤 <b id="stepCount">0</b></span>
+        <span><button class="sm" id="btnInsertVideo" title="插入一段视频（放在当前这一步后面）">🎬 ＋</button>
+          <button class="sm" id="btnRefresh" title="重新加载">↻</button></span>
+        <input type="file" id="insertVideoFile" accept="video/*,.mp4,.mov,.wmv,.avi,.mkv,.webm,.m4v" hidden>
+      </div>
+      <div id="stepList"></div>
+    </aside>
+
+    <section id="stage">
+      <div id="stageHead">
+        <button class="sm" id="tabShot">原始截图</button>
+        <button class="sm" id="tabRender">渲染预览</button>
+        <button class="sm" id="btnRedactMode" title="在截图上拖动框选要打码的区域">🔒 打码</button>
+        <span class="small muted" id="stageHint">拖动橙色框可调整高亮区域</span>
+        <div class="grow"></div>
+        <button class="sm" id="btnPlayAudio" title="试听这一步的配音">🔊 试听</button>
+        <button class="sm danger" id="btnDeleteStep">删除此步</button>
+      </div>
+      <div id="stageBody">
+        <div id="emptyState">
+          <h2>还没有内容</h2>
+          <ol>
+            <li data-i18n>确认本页服务已运行（<code>python app.py</code>）</li>
+            <li data-i18n>在 Chrome 里加载 <code>extension</code> 目录的扩展</li>
+            <li data-i18n>点扩展图标 → <b>开始录制</b>，然后正常操作网页</li>
+            <li>停止录制后回到这里，生成解说 → 语音 → 视频</li>
+          </ol>
+          <p><button class="primary" id="btnOpenProjects">选择已有项目</button>
+             <button id="btnEmptyImport">📊 从 PPT / PDF 创建</button></p>
+        </div>
+        <div id="shotWrap" class="hidden">
+          <img id="shot" alt="">
+          <div id="hl" class="hidden"><span class="tip"></span><span class="handle"></span></div>
+          <div id="redactLayer"></div>
+        </div>
+        <img id="previewImg" class="hidden" alt="">
+        <video id="stageVideo" class="hidden" controls preload="metadata"></video>
+      </div>
+    </section>
+
+    <aside id="inspector">
+      <div id="inspEmpty" class="muted small">选择左侧的一个步骤开始编辑。</div>
+
+      <div id="inspProject" class="hidden">
+        <h3 id="pjHead">片头</h3>
+        <div id="pjIntroFields">
+          <label class="field"><span>视频标题（画面中央的大字）</span>
+            <input type="text" id="pjTitle" placeholder="例如：3 分钟上手后台管理"></label>
+          <label class="field"><span>副标题（下面一行小字，可留空）</span>
+            <input type="text" id="pjSubtitle" placeholder="看完能学会什么"></label>
+          <label class="field"><span>片头旁白（会被念出来，同时当字幕）</span>
+            <textarea id="pjIntro" rows="4" placeholder="留空则片头只有标题、没有配音"></textarea></label>
+          <label class="switch"><input type="checkbox" id="pjIntroOn"> 视频包含片头</label>
+        </div>
+        <div id="pjOutroFields" class="hidden">
+          <label class="field"><span>片尾文案（会显示成大字，同时被念出来）</span>
+            <textarea id="pjOutro" rows="4" placeholder="留空：有背景图时只显示背景，没有就不生成片尾"></textarea></label>
+          <label class="switch"><input type="checkbox" id="pjOutroOn"> 视频包含片尾</label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button class="sm grow" id="pjTTS">重新合成这段语音</button>
+          <button class="sm" id="pjPlay">🔊 试听</button>
+        </div>
+        <div class="small muted" id="pjAudioInfo" style="margin-top:6px"></div>
+
+        <h3>背景画面</h3>
+        <div class="voice-card">
+          <div class="row">
+            <span class="vbadge" id="pjBgBadge">默认</span>
+            <span class="small grow" id="pjBgInfo"></span>
+          </div>
+          <div class="row wrap" style="margin-top:8px;gap:6px">
+            <button class="sm" id="pjBgUpload">⬆ 上传图片 / PPT / PDF</button>
+            <button class="sm" id="pjBgRemove">恢复默认背景</button>
+          </div>
+          <input type="file" id="pjBgFile" accept=".png,.jpg,.jpeg,.webp,.bmp,.pptx,.ppt,.pdf" hidden>
+          <div id="pjBgOpts" class="hidden" style="margin-top:10px">
+            <label class="field" id="pjBgPageWrap"><span id="pjBgPageLabel">使用第几页</span>
+              <input type="number" id="pjBgPage" min="1" value="1"></label>
+            <label class="field"><span>放置方式</span>
+              <select id="pjBgFit">
+                <option value="contain">完整显示（空出的边用模糊背景补齐）</option>
+                <option value="cover">铺满画面（多出的部分裁掉）</option>
+              </select></label>
+            <label class="switch"><input type="checkbox" id="pjBgText"> <span id="pjBgTextLabel">在背景上显示标题文字</span></label>
+          </div>
+        </div>
+        <label class="field" style="margin-top:10px"><span>停留时间（秒，0 = 按配音自动）</span>
+          <input type="number" id="pjBgDur" min="0" max="60" step="0.5" value="0"></label>
+        <p class="small muted" style="margin-top:10px">
+          可以用公司统一的封面：上传一张图片，或者一份 PPT / PDF 选其中一页。没有上传时用默认背景，配色在右上角 ⚙ 设置 → 视频风格 里调。
+        </p>
+      </div>
+
+      <div id="inspBody" class="hidden">
+        <h3>这一步做了什么</h3>
+        <div id="stepFacts"></div>
+
+        <label class="field"><span>画面标题</span>
+          <input type="text" id="fTitle" placeholder="显示在视频左上角"></label>
+
+        <div class="field" id="fNarrationWrap">
+          <div class="field-head"><span>解说词（会被念出来）</span>
+            <button class="xs" id="btnDictate" title="对着麦克风说，自动转成文字填进来">🎤 口述</button></div>
+          <textarea id="fNarration" rows="4" placeholder="留空则不配音；也可以点右上角「口述」直接说"></textarea>
+        </div>
+        <div class="field hidden" id="dlgWrap">
+          <div class="field-head"><span>问答台词（一句一行，按顺序念）</span>
+            <button class="xs" id="btnSpeakers2" title="改名字、换音色">🎭 讲者</button></div>
+          <div id="dlgLines" class="dlg-lines"></div>
+          <div class="row" style="gap:6px;margin-top:6px">
+            <button class="xs" id="dlgAddHost"></button>
+            <button class="xs" id="dlgAddExpert"></button>
+          </div>
+        </div>
+        <div class="row" style="margin:-4px 0 10px">
+          <input type="text" id="fRewrite" class="grow" placeholder="改写要求，如：更简短、更专业">
+          <button class="sm" id="btnRewrite">AI 改写</button>
+        </div>
+
+        <label class="field"><span>字幕（默认同解说词）</span>
+          <textarea id="fCaption" rows="2"></textarea></label>
+
+        <label class="field" id="fNoteWrap"><span>给 AI 的备注（生成解说时参考）</span>
+          <input type="text" id="fNote" placeholder="例如：强调这里必须勾选"></label>
+
+        <div id="slideBox" class="hidden">
+          <h3>幻灯片内容</h3>
+          <details class="small"><summary class="muted">页面上的文字</summary>
+            <div id="slideText" class="pre muted"></div></details>
+          <label class="field" style="margin-top:8px"><span>演讲者备注</span>
+            <textarea id="fSlideNotes" rows="3" placeholder="这一页没有备注"></textarea></label>
+          <button class="sm" id="btnUseNotes">用备注替换解说词</button>
+          <div id="revealBox" style="margin-top:14px">
+            <label class="switch"><input type="checkbox" id="fRevealAll"> 幻灯片逐条出现，突出当前讲的内容（整个项目）</label>
+            <label class="switch"><input type="checkbox" id="fRevealPage"> 这一页逐条出现</label>
+            <p class="small muted" id="revealHint" style="margin:4px 0 0"></p>
+          </div>
+        </div>
+
+        <div id="videoBox" class="hidden">
+          <h3>视频</h3>
+          <div class="voice-card">
+            <div class="row">
+              <span class="vbadge" id="vbBadge"></span>
+              <span class="small grow" id="vbInfo"></span>
+            </div>
+            <div class="small warn-text hidden" id="vbMissing" style="margin-top:6px"></div>
+            <div class="row wrap" style="margin-top:8px;gap:6px">
+              <button class="sm" id="vbUpload">⬆ 上传视频文件</button>
+              <button class="sm" id="vbTranscribe" title="用本机的语音识别把视频里讲的话转成字幕">🎤 视频里的讲话转成字幕</button>
+            </div>
+            <input type="file" id="vbFile" accept="video/*,.mp4,.mov,.wmv,.avi,.mkv,.webm,.m4v" hidden>
+          </div>
+          <label class="field" style="margin-top:10px"><span>播放方式</span>
+            <select id="vbMode">
+              <option value="inset">在幻灯片原位置播放</option>
+              <option value="fullscreen">全屏播放</option>
+              <option value="poster">只显示封面（不播放）</option>
+            </select></label>
+          <div class="row">
+            <label class="field grow"><span>从第几秒开始</span>
+              <input type="number" id="vbStart" min="0" step="0.1" value="0"></label>
+            <button class="xs" id="vbSetStart" title="用播放器当前的位置">⏱ 当前位置</button>
+          </div>
+          <div class="row">
+            <label class="field grow"><span>到第几秒结束（0 = 播到最后）</span>
+              <input type="number" id="vbEnd" min="0" step="0.1" value="0"></label>
+            <button class="xs" id="vbSetEnd" title="用播放器当前的位置">⏱ 当前位置</button>
+          </div>
+          <label class="field"><span>声音</span>
+            <select id="vbAudio">
+              <option value="original">播放视频原声</option>
+              <option value="mute">视频静音，念上面的解说词</option>
+            </select></label>
+          <p class="small muted" id="vbHint"></p>
+        </div>
+
+        <div id="rdSection">
+        <h3>敏感信息打码 <span class="muted" id="rdCount"></span></h3>
+        <div id="rdList" class="small"></div>
+        <div class="row" style="margin-top:6px">
+          <button class="sm grow" id="btnRedactHere">＋ 在截图上画框</button>
+          <button class="sm" id="btnRedactScan">全项目扫描…</button>
+        </div>
+        </div>
+
+        <h3>画面控制</h3>
+        <label class="switch"><input type="checkbox" id="fInclude"> 包含在视频中</label>
+        <label class="switch" id="fZoomWrap"><input type="checkbox" id="fZoom"> 放大镜头</label>
+        <label class="switch" id="fHighlightWrap"><input type="checkbox" id="fHighlight"> 高亮操作区域</label>
+        <label class="field"><span>时长覆盖（秒，0 = 自动跟随配音）</span>
+          <input type="number" id="fDuration" min="0" max="60" step="0.5" value="0"></label>
+
+        <h3>配音</h3>
+        <div class="voice-card">
+          <div class="row">
+            <span class="vbadge" id="voiceBadge">AI</span>
+            <span class="small grow" id="audioInfo"></span>
+            <button class="xs" id="btnPlayStep" title="试听">▶</button>
+          </div>
+          <div class="row wrap" style="margin-top:8px;gap:6px">
+            <button class="sm" id="btnRecordVoice">🎙 录我的声音</button>
+            <button class="sm" id="btnUploadVoice">⬆ 上传音频</button>
+            <button class="sm" id="btnStepTTS">↻ AI 重新合成</button>
+            <button class="sm hidden" id="btnVoiceToAI">改用 AI 配音</button>
+            <button class="sm danger" id="btnVoiceDelete">删除</button>
+          </div>
+          <input type="file" id="voiceFile" accept="audio/*,.mp3,.wav,.m4a,.webm" hidden>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer id="actions">
+    <button class="primary" id="btnAuto" title="脚本 → 语音 → 视频 一条龙">⚡ 一键生成</button>
+    <button id="btnScript">① 生成解说</button>
+    <button id="btnTTS">② 合成语音</button>
+    <button id="btnVoiceMenu" title="配音批量操作">🎙 ▾</button>
+    <button id="btnSpeakers" class="hidden" title="两人问答的讲者：名字、音色">🎭 讲者</button>
+    <button id="btnRender">③ 渲染视频</button>
+    <button id="btnTranslate">🌐 翻译</button>
+    <button id="btnExport">导出 ▾</button>
+    <div id="progressWrap">
+      <div id="progressBar"><i></i></div>
+      <div id="progressText">就绪</div>
+    </div>
+    <button class="stop hidden" id="btnStopJob" title="停止正在进行的任务，已经做完的部分会保留">■ 停止</button>
+    <button class="blue" id="btnOpenVideo" disabled>▶ 查看视频</button>
+  </footer>
+</div>
+
+<div id="toast"></div>
+
+<!-- 设置 -->
+<div class="modal hidden" id="mSettings">
+  <div class="box">
+    <h2>设置</h2>
+    <div class="tabs">
+      <button class="on" data-tab="ai">AI 与语音</button>
+      <button data-tab="video">视频风格</button>
+      <button data-tab="about">关于</button>
+    </div>
+
+    <div data-pane="ai">
+      <h3 class="set-sub" style="margin-top:4px">AI 模型（写解说、翻译、AI 改写）</h3>
+      <label class="field"><span>服务商</span>
+        <select id="sProvider"></select></label>
+      <p class="small notes-hint" id="sProviderHint"></p>
+      <label class="field hidden" id="sBaseField"><span>接口地址</span>
+        <input type="text" id="sBaseUrl" spellcheck="false"></label>
+      <label class="field"><span id="sKeyLabel">API Key</span>
+        <input type="password" id="sKey" placeholder="粘贴新的 Key；留空 = 保持原来的" autocomplete="off" spellcheck="false"></label>
+      <div class="row" style="margin:-4px 0 12px">
+        <span class="small muted grow" id="sKeyState"></span>
+        <button class="sm hidden" id="btnClearKey">清除已存的 Key</button>
+      </div>
+      <div class="field-block">
+        <div class="field-head"><span>模型</span>
+          <button class="xs" id="btnListModels">获取模型列表</button></div>
+        <input type="text" id="sModel" list="sModelList" spellcheck="false" autocomplete="off">
+        <datalist id="sModelList"></datalist>
+      </div>
+      <div class="row" style="margin:6px 0 12px">
+        <span class="small muted grow" id="sTestState"></span>
+        <button class="sm" id="btnTestKey">测试连接</button>
+      </div>
+
+      <h3 class="set-sub">配音</h3>
+      <label class="field"><span>解说语言</span><select id="sLang"></select></label>
+      <label class="field"><span>配音音色</span><select id="sVoice"></select></label>
+      <div class="row">
+        <label class="field grow"><span>语速</span>
+          <select id="sRate">
+            <option value="-15%">慢</option><option value="-8%">稍慢</option>
+            <option value="+0%" selected>正常</option><option value="+10%">稍快</option>
+            <option value="+20%">快</option>
+          </select></label>
+        <button class="sm" id="btnTryVoice" style="margin-top:14px">试听</button>
+      </div>
+      <details class="small" id="sTtsBox" style="margin:4px 0 10px">
+        <summary>更多配音服务（付费，声音更自然）</summary>
+        <p class="small muted" style="margin:8px 0">默认的 Edge 配音免费。填了下面某一家的 Key，它的音色就会出现在所有「配音音色」下拉框里（名字前面带服务名），项目、两位讲者都可以选。配音文字会发给对应的公司。</p>
+        <label class="field"><span>服务</span><select id="sTtsSvc"></select></label>
+        <p class="small notes-hint" id="sTtsHint"></p>
+        <label class="field"><span>API Key</span>
+          <input type="password" id="sTtsKey" placeholder="粘贴新的 Key；留空 = 保持原来的" autocomplete="off" spellcheck="false"></label>
+        <label class="field hidden" id="sTtsVoicesWrap"><span>自己的音色 ID（可选，比如复刻的声音；多个用逗号分开）</span>
+          <input type="text" id="sTtsVoices" spellcheck="false"></label>
+        <div class="row" style="margin:6px 0 4px">
+          <span class="small muted grow" id="sTtsState"></span>
+          <button class="sm" id="btnTtsClear">清除 Key</button>
+          <button class="sm" id="btnTtsTest">测试</button>
+        </div>
+      </details>
+
+      <h3 class="set-sub">语音识别（录音转文字，在本机运行）</h3>
+      <div class="row">
+        <label class="field grow"><span>识别模型</span>
+          <select id="sAsrModel">
+            <option value="tiny">tiny（75MB，最快，准确度一般）</option>
+            <option value="base">base（145MB）</option>
+            <option value="small">small（465MB，推荐）</option>
+            <option value="medium">medium（1.5GB，更准，更慢）</option>
+            <option value="large-v3">large-v3（3GB，最准，需要好 CPU / 显卡）</option>
+          </select></label>
+        <button class="sm" id="btnAsrPrepare" style="margin-top:14px">下载 / 加载</button>
+      </div>
+      <div class="small muted" id="sAsrState" style="margin:-4px 0 10px"></div>
+      <label class="field"><span>模型下载源（留空 = 自动：先试 HuggingFace 官方，连不上就改用国内镜像 hf-mirror.com）</span>
+        <input type="text" id="sHfEndpoint" placeholder="留空 = 自动"></label>
+      <label class="switch"><input type="checkbox" id="sFillers"> 识别时去掉「嗯 / 啊 / 呃」等口头禅</label>
+    </div>
+
+    <div data-pane="video" class="hidden">
+      <div class="row">
+        <label class="field grow"><span>分辨率</span>
+          <select id="sRes">
+            <option value="1920x1080">1920 × 1080（1080p）</option>
+            <option value="2560x1440">2560 × 1440（2K）</option>
+            <option value="1280x720">1280 × 720（720p）</option>
+            <option value="1080x1920">1080 × 1920（竖屏）</option>
+          </select></label>
+        <label class="field" style="width:110px"><span>帧率</span>
+          <select id="sFps"><option>24</option><option selected>30</option><option>60</option></select></label>
+      </div>
+      <div class="row">
+        <label class="field grow"><span>主题色</span><input type="text" id="sAccent" placeholder="#FF5C39"></label>
+        <label class="field grow"><span>背景色</span><input type="text" id="sBg" placeholder="#0E1116"></label>
+      </div>
+      <label class="switch"><input type="checkbox" id="sZoomEnabled"> 自动放大到操作区域</label>
+      <label class="switch"><input type="checkbox" id="sDim"> 高亮区域外变暗</label>
+      <label class="switch"><input type="checkbox" id="sCursor"> 显示鼠标指针动画</label>
+      <label class="switch"><input type="checkbox" id="sBadge"> 显示步骤序号</label>
+      <label class="switch"><input type="checkbox" id="sFrame"> 加浏览器外框</label>
+      <label class="switch"><input type="checkbox" id="sSubs"> 把字幕烧进画面</label>
+      <label class="switch" title="主字幕往上挪一点，画面最底下留给第二语言字幕（外挂字幕文件，看的人自己选）"><input type="checkbox" id="sSubSpace"> 给第二语言字幕留位置</label>
+      <label class="switch"><input type="checkbox" id="sIntro"> 生成片头</label>
+      <label class="switch"><input type="checkbox" id="sOutro"> 生成片尾</label>
+      <div class="row">
+        <label class="field grow"><span>每步最短时长（秒）</span>
+          <input type="number" id="sMinDur" step="0.5" min="1" max="15"></label>
+        <label class="field grow"><span>放大倍数</span>
+          <input type="number" id="sZoomF" step="0.05" min="1" max="2.5"></label>
+      </div>
+    </div>
+
+    <div data-pane="about" class="hidden small muted">
+      <p>StepCast —— comlong的教学视频生成器。</p>
+      <p data-i18n>录制来自浏览器扩展，解说由你在设置里选择的 AI 模型生成，配音使用在线语音合成服务，画面和视频在本机合成。项目文件保存在本机 <code>projects/</code> 目录。</p>
+      <p id="aboutInfo"></p>
+      <h3 class="set-sub">免责声明</h3>
+      <p data-i18n>本软件在你的电脑上运行，但部分功能会调用第三方公司的在线服务（AI 生成解说、翻译和改写，AI 配音，下载语音识别模型），相关的文字内容会发送到这些公司的服务器。这些服务的可用性、费用、数据处理方式和使用条款由提供服务的公司决定，不受本软件控制。</p>
+      <p data-i18n>使用前请自行确认：要处理的内容可以发送给外部服务，并且符合所在地的法律法规（包括个人信息与数据保护的规定）、公司规定和保密义务。本软件按现状提供，不作任何保证；因使用本软件产生的法律风险、违规责任和其他后果，由使用者个人承担。</p>
+    </div>
+
+    <div class="foot">
+      <button id="btnCloseSettings">取消</button>
+      <button class="primary" id="btnSaveSettings">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 项目列表 -->
+<div class="modal hidden" id="mProjects">
+  <div class="box">
+    <h2>项目</h2>
+    <div id="projList"></div>
+    <div class="foot">
+      <button id="btnImportSlides">📊 从 PPT / PDF 创建</button>
+      <button id="btnNewProject">新建空项目</button>
+      <button class="primary" id="btnCloseProjects">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 生成解说 -->
+<div class="modal hidden" id="mScript">
+  <div class="box">
+    <h2>生成解说脚本</h2>
+    <div id="gSlides" class="hidden">
+      <p class="small notes-hint" id="gSlidesInfo"></p>
+      <label class="field"><span>解说从哪来</span>
+        <select id="gNotes">
+            <option value="verbatim">备注原文就是解说（推荐）</option>
+            <option value="reference">AI 参考备注，改写成口语</option>
+            <option value="ignore">不用备注，AI 按页面内容写</option>
+        </select></label>
+      <label class="field" id="gMissingField"><span>没有备注的页</span>
+        <select id="gMissing">
+            <option value="ai">AI 按页面内容补写</option>
+            <option value="empty">留空，我自己补</option>
+        </select></label>
+      <label class="field" id="gDetailField"><span>详细程度（AI 写的页）</span>
+        <select id="gDetail">
+          <option value="brief">简要 · 只讲要点</option>
+          <option value="standard">标准 · 要点加上下文</option>
+          <option value="comprehensive">详细 · 逐条讲透</option>
+        </select></label>
+    </div>
+    <div id="gCapture">
+    <label class="field"><span>风格</span>
+      <select id="gStyle">
+        <option value="friendly">亲切自然（推荐）</option>
+        <option value="concise">极简高效</option>
+        <option value="formal">正式培训</option>
+        <option value="marketing">有感染力</option>
+      </select></label>
+    <label class="field"><span>目标观众（可选）</span>
+      <input type="text" id="gAudience" placeholder="例如：第一次使用后台的运营同学"></label>
+    </div>
+    <label class="field"><span>额外要求（可选）</span>
+      <input type="text" id="gExtra" placeholder="例如：每步都提醒一下注意事项"></label>
+    <label class="switch"><input type="checkbox" id="gOverwrite"> 覆盖我已经手动改过的解说</label>
+    <div class="foot">
+      <button id="btnCloseScript">取消</button>
+      <button class="primary" id="btnRunScript">开始生成</button>
+    </div>
+  </div>
+</div>
+
+<!-- 两人问答的讲者 -->
+<div class="modal hidden" id="mSpeakers">
+  <div class="box">
+    <h2>讲者</h2>
+    <p class="small muted">名字只在编辑器里区分是谁说的，不会念出来，也不上字幕。换了音色的人说过的台词需要重新配音。</p>
+    <div class="spk-grid">
+      <div class="spk-card" data-role="host">
+        <div class="spk-head"><b>主持人</b></div>
+        <label class="field"><span>名字</span><input type="text" class="spk-name" maxlength="20"></label>
+        <label class="field"><span>音色</span><select class="spk-voice"></select></label>
+        <button class="sm" data-act="try">试听</button>
+      </div>
+      <div class="spk-card" data-role="expert">
+        <div class="spk-head"><b>讲师</b></div>
+        <label class="field"><span>名字</span><input type="text" class="spk-name" maxlength="20"></label>
+        <label class="field"><span>音色</span><select class="spk-voice"></select></label>
+        <button class="sm" data-act="try">试听</button>
+      </div>
+    </div>
+    <div class="foot">
+      <button id="btnCloseSpeakers">取消</button>
+      <button class="primary" id="btnSaveSpeakers">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 翻译 -->
+<div class="modal hidden" id="mTranslate">
+  <div class="box">
+    <h2>翻译成其他语言</h2>
+    <label class="field"><span>目标语言</span><select id="tLang"></select></label>
+    <label class="field"><span>配音音色</span><select id="tVoice"></select></label>
+    <p class="small muted" id="tHint">翻译会替换当前脚本并清空已生成的语音。建议先「导出脚本」备份，或复制一份项目。</p>
+    <div class="foot">
+      <button id="btnCloseTranslate">取消</button>
+      <button class="primary" id="btnRunTranslate">翻译并切换</button>
+    </div>
+  </div>
+</div>
+
+<!-- 录音 / 口述 -->
+<div class="modal hidden" id="mVoice">
+  <div class="box">
+    <h2 id="vrTitle">🎙 录我的声音</h2>
+    <div class="row">
+      <label class="field grow"><span>麦克风</span><select id="vrDevice"></select></label>
+      <label class="field" style="width:140px"><span>识别语言</span><select id="vrLang"></select></label>
+    </div>
+    <div class="rec-stage">
+      <button class="rec-btn" id="vrRec" title="开始 / 停止"><span></span></button>
+      <div class="grow">
+        <div class="rec-time" id="vrTime">00:00</div>
+        <div class="small muted" id="vrHint">点红色按钮开始录音</div>
+        <div class="meter"><i id="vrLevel"></i></div>
+      </div>
+    </div>
+    <audio id="vrPlayer" controls class="hidden" style="width:100%;margin-top:12px"></audio>
+    <div id="vrOptsOwn" style="margin-top:12px">
+      <label class="switch"><input type="checkbox" id="vrTranscribe" checked> 自动识别成文字（用作字幕，之后也能一键改成 AI 配音）</label>
+      <label class="switch"><input type="checkbox" id="vrReplace" checked> 用识别结果替换当前解说词</label>
+    </div>
+    <p class="small muted">录音和识别都在本机完成，不经过任何云服务。</p>
+    <div class="foot">
+      <button id="vrCancel">取消</button>
+      <button id="vrRetake" class="hidden">重录</button>
+      <button class="primary" id="vrConfirm" disabled>使用这段录音</button>
+    </div>
+  </div>
+</div>
+
+<!-- PPT / PDF 导入 -->
+<div class="modal hidden" id="mImport">
+  <div class="box wide">
+    <h2>📊 从 PPT / PDF 创建视频</h2>
+
+    <div id="imStage1">
+      <label class="drop" id="imDrop">
+        <input type="file" id="imFile" accept=".pptx,.ppt,.pdf" hidden>
+        <div class="drop-ico">⬆</div>
+        <div data-i18n><b>点击选择文件</b>，或拖到这里</div>
+        <div class="small muted" style="margin-top:4px">.pptx / .ppt / .pdf，最多 100 页 · 每一页变成视频里的一个步骤 · 页面里的视频会保留，动画和切换效果不会</div>
+      </label>
+      <div class="small muted" id="imStatus" style="margin-top:10px"></div>
+    </div>
+
+    <div id="imStage2" class="hidden">
+      <div class="row" style="margin-bottom:10px">
+        <b class="grow" id="imFileName"></b>
+        <span class="small muted" id="imSummary"></span>
+        <button class="sm" id="imAll">全选</button>
+        <button class="sm" id="imNone">清空</button>
+      </div>
+      <div class="im-grid" id="imGrid"></div>
+      <p class="small notes-hint hidden" id="imNotesHint"></p>
+      <p class="small notes-hint hidden" id="imVideosHint"></p>
+      <div class="im-opts">
+        <label class="field"><span>视频名称</span><input type="text" id="imName"></label>
+        <label class="field"><span>讲解方式</span>
+          <select id="imMode">
+            <option value="single">一个人讲解</option>
+            <option value="dialogue">两人问答（主持人提问、讲师讲解）</option>
+          </select></label>
+        <label class="field" id="imNotesField"><span>解说从哪来</span>
+          <select id="imNotes">
+            <option value="verbatim">备注原文就是解说（推荐）</option>
+            <option value="reference">AI 参考备注，改写成口语</option>
+            <option value="ignore">不用备注，AI 按页面内容写</option>
+          </select></label>
+        <label class="field" id="imMissingField"><span>没有备注的页</span>
+          <select id="imMissing">
+            <option value="ai">AI 按页面内容补写</option>
+            <option value="empty">留空，我自己补</option>
+          </select></label>
+        <label class="field"><span>详细程度（AI 写的页）</span>
+          <select id="imDetail">
+            <option value="brief">简要 · 只讲要点</option>
+            <option value="standard" selected>标准 · 要点加上下文</option>
+            <option value="comprehensive">详细 · 逐条讲透</option>
+          </select></label>
+        <label class="field"><span>解说语言</span><select id="imLang"></select></label>
+        <label class="field" id="imVoiceWrap"><span>配音音色</span><select id="imVoice"></select></label>
+        <label class="field hidden" id="imHostWrap"><span>主持人音色（提问）</span><select id="imHostVoice"></select></label>
+        <label class="field hidden" id="imExpertWrap"><span>讲师音色（讲解）</span><select id="imExpertVoice"></select></label>
+        <label class="switch" style="align-self:end;margin-bottom:14px">
+          <input type="checkbox" id="imAutoVoice" checked> 写完解说自动配音</label>
+        <label class="switch hidden" id="imVideosWrap" style="align-self:end;margin-bottom:14px">
+          <input type="checkbox" id="imVideos" checked> 包含幻灯片里的视频</label>
+        <label class="switch hidden" id="imRevealWrap" style="align-self:end;margin-bottom:14px"
+               title="解说说到哪一条，那一条才出现；讲到下一条时，前面讲过的变淡。需要本机 PowerPoint，导入会慢一些。">
+          <input type="checkbox" id="imReveal" checked> 逐条出现，突出当前讲的内容</label>
+      </div>
+      <p class="small" id="imPrivacy"></p>
+    </div>
+
+    <div class="foot">
+      <button id="imBack" class="hidden">换一个文件</button>
+      <div class="grow"></div>
+      <button id="imCancel">取消</button>
+      <button class="primary hidden" id="imCreate">生成视频项目</button>
+    </div>
+  </div>
+</div>
+
+<!-- 打码扫描 -->
+<div class="modal hidden" id="mRedact">
+  <div class="box">
+    <h2>敏感信息打码</h2>
+    <p class="small muted" id="rdStats"></p>
+
+    <h3 style="font-size:12px;color:var(--muted);margin:14px 0 8px">识别规则</h3>
+    <label class="switch"><input type="checkbox" id="rdBuiltin" checked>
+      邮箱 / 手机号 / 身份证 / 银行卡 / IP 地址</label>
+    <label class="switch"><input type="checkbox" id="rdNames" checked>
+      带标签的人名（「姓名：张三」「Name: John」）</label>
+    <label class="switch"><input type="checkbox" id="rdNamesGuess">
+      <span data-i18n>裸的中文短名（<b class="warn-text">会误报</b>，如「付款方式」也可能被当成人名）</span></label>
+
+    <label class="field" style="margin-top:12px"><span>另外要打码的词（逗号或换行分隔）</span>
+      <textarea id="rdKeywords" rows="3" placeholder="张三, 李四, 内部项目代号, 客户名"></textarea></label>
+
+    <label class="field"><span>打码方式</span>
+      <select id="rdMode">
+        <option value="blur">模糊（马赛克 + 高斯）</option>
+        <option value="pixelate">像素化（马赛克）</option>
+        <option value="solid">纯色块（最彻底）</option>
+      </select></label>
+
+    <p class="small muted">扫描依据的是录制时记录在本机的页面文字位置。命中的内容同时会从
+      页面标题、元素文字、输入值里抹成掩码 —— 这几项是唯一会发给 AI 模型的字段。</p>
+
+    <div class="foot">
+      <button class="danger" id="btnRdClearIndex">清空文字索引</button>
+      <button class="danger" id="btnRdClearAuto">清除自动打码</button>
+      <div class="grow"></div>
+      <button id="btnCloseRedact">关闭</button>
+      <button class="primary" id="btnRunRedact">开始扫描</button>
+    </div>
+  </div>
+</div>
+
+<!-- 视频 -->
+<div class="modal hidden" id="mVideo">
+  <div class="box wide">
+    <h2 id="vTitle">视频</h2>
+    <div class="v-stage" id="vStage">
+      <video id="vPlayer" controls disablepictureinpicture></video>
+      <div class="v-sub2" id="vSub2Text"><span></span></div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <span class="small muted grow" id="vInfo"></span>
+      <a id="vDownload" class="btn primary" download>下载 MP4</a>
+      <a id="vSrt" class="btn" download>下载字幕</a>
+      <button id="btnVFull" title="全屏（第二字幕也显示）">⛶</button>
+      <button id="btnCloseVideo">关闭</button>
+    </div>
+    <div class="sub2-box" id="vSub2Box">
+      <div class="row">
+        <b class="grow sub2-title">🌐 第二语言字幕</b>
+        <label class="small">预览 <select id="vSub2Preview"></select></label>
+      </div>
+      <p class="small muted" style="margin:4px 0 8px">主字幕烧在视频里；第二语言字幕是单独的字幕文件，紧贴在主字幕下面，看视频的人自己选一种（默认不显示）。</p>
+      <p class="small warn-text hidden" id="vSub2Hint"></p>
+      <div id="vSub2List"></div>
+      <button class="primary" id="btnSub2Open" style="margin-top:10px">🌐 生成第二语言字幕</button>
+      <div class="sub2-panel hidden" id="vSub2Panel">
+        <div class="small muted">选一种或几种语言，AI 会把主字幕整句翻译过去（用设置里的 AI 模型）：</div>
+        <div class="sub2-langs" id="vSub2Langs"></div>
+        <div class="row">
+          <span class="small muted grow" id="vSub2State"></span>
+          <button class="sm" id="btnSub2Cancel">取消</button>
+          <button class="sm primary" id="btnSub2Gen">开始生成</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <span class="small muted grow">网页播放包：视频 + 第二语言字幕 + 播放页（index.html）。放进公司网站的目录里，直接打开或用 iframe 嵌进页面，就能选第二字幕。</span>
+        <a id="vPack" class="btn" download>下载网页播放包</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/i18n.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

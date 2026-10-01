@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>边录边讲 · 麦克风设置</title>
+<style>
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
+         background: #0e1116; color: #e9edf4; font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+  .card { width: 460px; background: #161b23; border: 1px solid #262d38; border-radius: 14px; padding: 26px; }
+  h1 { margin: 0 0 4px; font-size: 18px; }
+  p { color: #8b94a6; margin: 0 0 18px; font-size: 13px; }
+  button { border: 0; border-radius: 8px; padding: 9px 16px; background: #ff5c39; color: #fff;
+           font-weight: 600; cursor: pointer; font-size: 14px; }
+  button.ghost { background: #232a35; color: #cdd5e2; font-weight: 500; }
+  select { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid #2b3240;
+           background: #10151c; color: #e9edf4; font-size: 13px; }
+  .meter { height: 10px; border-radius: 5px; background: #232a35; overflow: hidden; margin: 14px 0 6px; }
+  .meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #30c463, #ffb13b, #ff5c39); transition: width .06s; }
+  .ok { color: #30c463; } .bad { color: #ff8a80; }
+  .row { display: flex; gap: 8px; margin-top: 16px; }
+  label { display: block; font-size: 12px; color: #8b94a6; margin: 14px 0 6px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🎙 边录边讲 · 麦克风设置</h1>
+  <p>录制时你边操作边讲解，停止后自动识别成文字、分配到每一步。录音只发给本机服务，不会上传到其他地方。</p>
+
+  <div id="step1">
+    <button id="grant">允许使用麦克风</button>
+    <div id="msg" style="margin-top:10px;font-size:13px"></div>
+  </div>
+
+  <div id="step2" hidden>
+    <div class="ok">✓ 已授权</div>
+    <label>麦克风</label>
+    <select id="device"></select>
+    <label>试着说句话，看看音量条有没有跳动</label>
+    <div class="meter"><i id="level"></i></div>
+    <div class="row">
+      <button id="save">保存并关闭</button>
+      <button class="ghost" id="close">关闭</button>
+    </div>
+  </div>
+</div>
+<script src="i18n.js"></script>
+<script src="mic.js"></script>
+</body>
+</html>

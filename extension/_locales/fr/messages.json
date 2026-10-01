@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Enregistreur StepCast"
+  },
+  "extDescription": {
+    "message": "Enregistrez vos actions dans le navigateur et transformez-les en vidéos tutoriels avec narration, voix off et sous-titres."
+  },
+  "cmdToggle": {
+    "message": "Démarrer / arrêter l'enregistrement"
+  },
+  "cmdCapture": {
+    "message": "Ajouter manuellement une étape capture d'écran"
+  }
+}

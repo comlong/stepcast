@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    width: 300px; margin: 0; padding: 14px;
+    font: 13px/1.5 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #14171d; color: #e9edf4;
+  }
+  h1 { margin: 0 0 2px; font-size: 15px; letter-spacing: .2px; }
+  .sub { font-size: 11px; color: #8a93a5; margin-bottom: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 11.5px; margin-bottom: 10px;
+            padding: 6px 9px; border-radius: 8px; background: #1c212a; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #8a93a5; flex: none; }
+  .dot.ok { background: #30c463; }
+  .dot.bad { background: #e5484d; }
+  .dot.rec { background: #e5484d; animation: p 1.4s infinite; }
+  @keyframes p { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  input[type=text] {
+    width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid #2b3240; background: #1b202a; color: #e9edf4; font-size: 13px; outline: none;
+  }
+  input[type=text]:focus { border-color: #ff5c39; }
+  button {
+    width: 100%; padding: 9px 12px; margin-top: 8px; border: 0; border-radius: 8px;
+    background: #ff5c39; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button.ghost { background: #232a35; color: #cdd5e2; font-weight: 500; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .count { font-size: 26px; font-weight: 700; text-align: center; margin: 6px 0 2px; }
+  .count small { font-size: 11px; font-weight: 400; color: #8a93a5; display: block; }
+  .hint { font-size: 11px; color: #7c8598; margin-top: 10px; line-height: 1.6; }
+  .hint kbd { background: #232a35; border-radius: 4px; padding: 1px 5px; font-size: 10.5px; }
+  details { margin-top: 10px; }
+  summary { font-size: 11.5px; color: #8a93a5; cursor: pointer; }
+  .field { margin-top: 8px; }
+  .field label { display: block; font-size: 11px; color: #8a93a5; margin-bottom: 4px; }
+  .err { color: #ff8a80; font-size: 11px; margin-top: 8px; word-break: break-all; }
+  .chk { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: #b4bdcc; margin-top: 7px; }
+  .chk.big { font-size: 13px; color: #e9edf4; font-weight: 600; margin-top: 10px; }
+  .mic { margin-top: 4px; padding: 2px 10px 10px; border-radius: 8px; background: #1a1f28; }
+  .sel { padding: 6px 8px; border-radius: 7px; border: 1px solid #2b3240; background: #10151c;
+         color: #e9edf4; font-size: 12px; flex: 1; }
+  button.mini { width: auto; margin: 0; padding: 5px 9px; font-size: 11.5px; }
+  .grow { flex: 1; }
+  .rec-mic { display: flex; align-items: center; justify-content: center; gap: 6px;
+             font-size: 12px; color: #ff9c9c; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+  <h1>StepCast 录制器</h1>
+  <div class="sub">录浏览器操作 → 自动出教学视频</div>
+
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">检查服务…</span></div>
+
+  <div id="idleView">
+    <div class="field">
+      <label>教程名称（可留空）</label>
+      <input type="text" id="name" placeholder="例如：如何创建一个新项目">
+    </div>
+    <div class="mic">
+      <label class="chk big"><input type="checkbox" id="magicMic"> 🎙 边录边讲</label>
+      <div class="hint" style="margin:0 0 6px 20px">操作时对着麦克风讲解，停止后自动识别并分配到每一步</div>
+      <div id="micOpts" hidden>
+        <div class="row" style="gap:6px">
+          <select id="micMode" class="sel">
+            <option value="ai">讲完转成 AI 配音</option>
+            <option value="own">保留我的原声</option>
+          </select>
+          <select id="micLanguage" class="sel" style="width:132px">
+            <option value="zh-CN" translate="no">中文</option>
+            <option value="en-US">English</option>
+            <option value="de-DE">Deutsch</option>
+            <option value="fr-FR">Français</option>
+            <option value="pl-PL">Polski</option>
+            <option value="it-IT">Italiano</option>
+            <option value="es-ES">Español</option>
+            <option value="nl-NL">Nederlands</option>
+            <option value="ja-JP" translate="no">日本語</option>
+            <option value="ko-KR">한국어</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <span class="hint grow" id="micPerm" style="margin:0"></span>
+          <button class="ghost mini" id="micSetup">麦克风设置</button>
+        </div>
+      </div>
+    </div>
+    <button id="start">● 开始录制</button>
+    <button class="ghost" id="openEditor">打开编辑器</button>
+  </div>
+
+  <div id="recView" hidden>
+    <div class="count"><span id="count">0</span><small>已捕获步骤</small></div>
+    <div class="rec-mic" id="recMic" hidden><span class="dot rec"></span> 正在录讲解语音</div>
+    <button id="snap" class="ghost">＋ 手动补一张截图</button>
+    <button id="stop">■ 停止并编辑</button>
+  </div>
+
+  <div class="err" id="err"></div>
+
+  <details>
+    <summary>设置</summary>
+    <div class="field">
+      <label>本地服务地址</label>
+      <input type="text" id="serverUrl" placeholder="http://127.0.0.1:8756">
+    </div>
+    <label class="chk"><input type="checkbox" id="captureNavigation"> 页面跳转后自动补截图</label>
+    <label class="chk"><input type="checkbox" id="jpeg"> 用 JPEG 截图（体积更小）</label>
+    <hr style="border:0;border-top:1px solid #262d38;margin:10px 0">
+    <label class="chk"><input type="checkbox" id="autoRedact"> 自动识别敏感信息并打码</label>
+    <div class="hint" style="margin:2px 0 6px 20px">邮箱 / 手机号 / 身份证 / 银行卡 / IP，以及「姓名：」列里的人名</div>
+    <label class="chk"><input type="checkbox" id="indexText"> 记录页面文字位置（可事后补打码）</label>
+    <div class="field">
+      <label>额外要打码的词（逗号分隔）</label>
+      <input type="text" id="redactKeywords" placeholder="张三, 李四, 内部代号">
+    </div>
+    <button class="ghost" id="save">保存设置</button>
+  </details>
+
+  <div class="hint">
+    <div><kbd>Alt+Shift+R</kbd> <span>开始/停止</span> · <kbd>Alt+Shift+S</kbd> <span>补截图</span></div>
+    <div>录制前请先运行 python app.py</div>
+  </div>
+
+  <script src="i18n.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

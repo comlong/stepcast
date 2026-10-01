@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Grabador StepCast"
+  },
+  "extDescription": {
+    "message": "Graba acciones en el navegador y conviértelas en vídeos tutoriales con narración, locución y subtítulos."
+  },
+  "cmdToggle": {
+    "message": "Iniciar / detener grabación"
+  },
+  "cmdCapture": {
+    "message": "Añadir manualmente un paso con captura de pantalla"
+  }
+}

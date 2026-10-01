@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "Registratore StepCast"
+  },
+  "extDescription": {
+    "message": "Registra le azioni nel browser e trasformale in video tutorial con narrazione, voce fuori campo e sottotitoli."
+  },
+  "cmdToggle": {
+    "message": "Avvia / interrompi registrazione"
+  },
+  "cmdCapture": {
+    "message": "Aggiungi manualmente un passaggio con screenshot"
+  }
+}

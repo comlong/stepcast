@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "StepCast-recorder"
+  },
+  "extDescription": {
+    "message": "Neem browseracties op en maak er instructievideo's van met uitleg, voice-over en ondertitels."
+  },
+  "cmdToggle": {
+    "message": "Opname starten / stoppen"
+  },
+  "cmdCapture": {
+    "message": "Handmatig een schermafbeeldingsstap toevoegen"
+  }
+}

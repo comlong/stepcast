@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "StepCast 录制器"
+  },
+  "extDescription": {
+    "message": "录制浏览器操作并自动生成带解说、语音和字幕的教学视频。"
+  },
+  "cmdToggle": {
+    "message": "开始 / 停止录制"
+  },
+  "cmdCapture": {
+    "message": "手动补一张截图步骤"
+  }
+}

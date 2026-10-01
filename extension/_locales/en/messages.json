@@ -1,0 +1,14 @@
+{
+  "extName": {
+    "message": "StepCast Recorder"
+  },
+  "extDescription": {
+    "message": "Record browser actions and turn them into tutorial videos with narration, voice-over and subtitles."
+  },
+  "cmdToggle": {
+    "message": "Start / stop recording"
+  },
+  "cmdCapture": {
+    "message": "Add a screenshot step manually"
+  }
+}
