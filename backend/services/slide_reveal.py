@@ -684,11 +684,14 @@ class RevealAnim:
     Items with times <= 0 are visible from the start (drawn into the base image); the others fade in on time; focus = earlier items dim when the next one comes."""
 
     def __init__(self, clean_stage: Image.Image, layers: List[Tuple[Image.Image, int, int]],
-                 times: List[float], duration: float, rise: float, focus: bool = True):
+                 times: List[float], duration: float, rise: float, focus: bool = True,
+                 under: Optional[List[Tuple[Image.Image, Tuple[int, int, int, int]]]] = None):
         base = clean_stage.copy()
         for (layer, x, y), t in zip(layers, times):
             if t <= 0:
                 base.paste(layer, (x, y), layer.getchannel("A"))
+        for frame, (x, y, _w, _h) in under or []:
+            base.paste(frame, (x, y))                 # video-first slides: the video's last frame, under the items revealed later
         self.clean = base
         self.layers = layers
         self.times = times
@@ -760,7 +763,9 @@ def build_anim(rend, shots_dir: Path) -> Optional[RevealAnim]:
     sizes don't match, or nothing is worth revealing one by one."""
     st = rend.step
     rv = st.reveal
-    if rv is None or len(rv.items) < 2:
+    over = getattr(rend, "video_over", None)
+    video_first = over is not None and rv is not None and len(over) == len(rv.items)
+    if rv is None or len(rv.items) < (1 if video_first else 2):
         return None
     clean_path = shots_dir / rv.clean
     if not clean_path.exists():
@@ -787,10 +792,14 @@ def build_anim(rend, shots_dir: Path) -> Optional[RevealAnim]:
     audio_dur = st.audio_duration if st.audio else 0.0
     lead = float(getattr(rend, "speech_offset", 0.0) or 0.0)
     align = rv.align if rv.align and rv.align_key == align_key(narration, texts) else None
-    planned = plan(texts, centers, narration, st.boundaries, audio_dur, rend.duration - lead, align)
-    if planned is None:
-        return None
-    times, focus = planned
+    if video_first:
+        times, focus = _video_first_times(over, texts, centers, narration, st.boundaries, audio_dur,
+                                          rend.duration - lead, align, rend.theme.slide_reveal and rv.enabled)
+    else:
+        planned = plan(texts, centers, narration, st.boundaries, audio_dur, rend.duration - lead, align)
+        if planned is None:
+            return None
+        times, focus = planned
     times = [t + lead if t > 0 else t for t in times]
     saved = rend.shot
     rend.shot = clean
@@ -798,4 +807,27 @@ def build_anim(rend, shots_dir: Path) -> Optional[RevealAnim]:
         clean_stage = rend._build_stage()
     finally:
         rend.shot = saved
-    return RevealAnim(clean_stage, layers, times, rend.duration, rise=14 * rend.H / 1080, focus=focus)
+    return RevealAnim(clean_stage, layers, times, rend.duration, rise=14 * rend.H / 1080, focus=focus,
+                      under=getattr(rend, "video_under", None) if video_first else None)
+
+
+def _video_first_times(over: Sequence[bool], texts: Sequence[str], centers: Sequence[Tuple[float, float]], narration: str,
+                       boundaries: Sequence[Dict[str, Any]], audio_dur: float, total_dur: float,
+                       align: Optional[Sequence[int]], reveal_on: bool) -> Tuple[List[float], bool]:
+    """Times on a video-first slide: items not over a video are visible from the start (0); items over a video appear after it,
+    timed by the narration like ordinary reveal items (only among themselves). With reveal switched off, or when the narration
+    can't be matched, they appear one after another right away. Always > 0, so they are never visible while the video plays."""
+    sub = [k for k, o in enumerate(over) if o]
+    times = [0.0] * len(texts)
+    focus = False
+    planned = None
+    if sub and reveal_on:
+        planned = plan([texts[k] for k in sub], [centers[k] for k in sub], narration, boundaries, audio_dur, total_dur,
+                       [align[k] for k in sub] if align is not None else None)
+    if planned is not None:
+        sub_times, focus = planned
+    else:
+        sub_times = [FIRST_AT + r * CASCADE for r in range(len(sub))]
+    for k, t in zip(sub, sub_times):
+        times[k] = max(t, 0.05)
+    return times, focus and len(sub) >= 2

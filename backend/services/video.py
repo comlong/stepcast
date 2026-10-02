@@ -16,9 +16,9 @@ from PIL import Image
 
 from .. import config, i18n, storage
 from ..models import Project, Step
-from . import cards, clips, ffmpeg_util, second_subs, slide_reveal, subtitles as subs, tts
+from . import cards, clips, ffmpeg_util, second_subs, slide_reveal, slide_sequence, subtitles as subs, tts
 from .ffmpeg_util import CREATE_NO_WINDOW, FFmpegError
-from .renderer import StepRenderer, Theme, draw_subtitle, render_outro_card, render_title_card, sub_bottom
+from .renderer import StepRenderer, Theme, draw_subtitle, ease_out_cubic, render_outro_card, render_title_card, sub_bottom
 
 Progress = Optional[Callable[[float, str], None]]
 
@@ -249,6 +249,48 @@ def _card_style(proj: Project, kind: str) -> dict:
     return {"background": bg, "show_text": style.show_text, "fit": style.fit}
 
 
+# ---- video-first slides ----------------------------------------------------
+
+def _video_first_args(proj: Project, slide: Step, theme: Theme) -> Dict[str, object]:
+    """Extra StepRenderer arguments for a slide whose videos play first (see slide_sequence); {} for other steps."""
+    if not slide_sequence.is_video_first(slide):
+        return {}
+    videos = slide_sequence.slide_videos(proj.steps, slide)
+    if not videos:
+        return {}
+    shots = storage.screenshots_dir(proj.id)
+    box, has_slide = StepRenderer.layout_box(slide, shots / slide.screenshot if slide.screenshot else Path("_"), theme)
+    last = slide_sequence.last_frames(proj.id, videos, box, has_slide, theme.width, theme.height)
+    # when the last video played in place the picture simply continues (no fade); after a full-screen one the slide fades in as usual
+    return {"under": [f for f in last if f is not None], "over": slide_sequence.over_video(slide, videos, shots),
+            "fade_in": last[-1] is None}
+
+
+def _video_first_base(proj: Project, slide: Step, theme: Theme, args: Dict[str, object]) -> Optional[Image.Image]:
+    """Background while a video-first slide's videos play: the slide with the text over the videos hidden.
+    args = _video_first_args of the slide; None without reveal data (the video step's own background is used then)."""
+    if not args or not slide.screenshot:
+        return None
+    try:
+        rend = StepRenderer(step=slide, screenshot_path=storage.screenshots_dir(proj.id) / slide.screenshot,
+                            theme=theme, **args)
+    except Exception:
+        return None
+    return rend.reveal.clean if rend.reveal is not None else None
+
+
+def _fade_in(frames, prev: Optional[Image.Image], bg: Tuple[int, int, int], fps: int, W: int, H: int):
+    """Fade the first 0.35 s of a segment in the way a slide change does (see StepRenderer.frame):
+    from prev (the previous slide's last frame), otherwise from the background color."""
+    start = prev if prev is not None and prev.size == (W, H) else Image.new("RGB", (W, H), bg)
+    for k, buf in enumerate(frames):
+        t = k / fps
+        if t < 0.35:
+            img = Image.frombuffer("RGB", (W, H), buf, "raw", "RGB", 0, 1)
+            buf = Image.blend(start, img, ease_out_cubic(t / 0.35)).tobytes()
+        yield buf
+
+
 # ---- main flow -------------------------------------------------------------
 
 def render_project(proj: Project, progress: Progress = None,
@@ -274,9 +316,14 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
     out_dir = storage.output_dir(proj.id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    steps = [s for s in proj.steps if s.include]
+    # video-first slides: their videos are rendered in front of them
+    order, video_owner = slide_sequence.render_order(proj.steps)
+    steps = [s for s in order if s.include]
     if not steps:
         raise FFmpegError(i18n.t("没有启用的步骤，无法生成视频。"))
+    # their renderer arguments (the videos' last frames …) and the background while their videos play, prepared once
+    vf_args = {s.id: _video_first_args(proj, s, theme) for s in steps if slide_sequence.is_video_first(s)}
+    vf_base = {o.id: _video_first_base(proj, o, theme, vf_args.get(o.id, {})) for o in video_owner.values()}
 
     # --- 1. plan the timeline ---
     plan: List[Dict] = []
@@ -378,16 +425,18 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
     intro_title = proj.title or ("" if intro_card else proj.name)
 
     def _prev_slide_frame(i: int):
-        """If this step and the previous one are both slides, return the previous slide's last frame (cross-fade from it); otherwise None."""
+        """If this step is a slide (or the first video of a video-first slide) and the previous one is a slide,
+        return the previous slide's last frame (cross-fade from it); otherwise None."""
         item, prev = plan[i], plan[i - 1] if i > 0 else None
-        if (item["kind"] != "step" or item["step"].kind != "slide" or prev is None or prev["kind"] != "step"
-                or prev["step"].kind != "slide"):
+        if item["kind"] != "step" or prev is None or prev["kind"] != "step" or prev["step"].kind != "slide":
+            return None
+        if item["step"].kind != "slide" and item["step"].id not in video_owner:
             return None
         ps: Step = prev["step"]
         try:
             pr = StepRenderer(step=ps, screenshot_path=shots / ps.screenshot if ps.screenshot else Path("_"),
                               theme=theme, total_steps=len(steps), duration=prev["duration"], step_no=prev["no"],
-                              speech_offset=prev.get("lead", 0.0))
+                              speech_offset=prev.get("lead", 0.0), **vf_args.get(ps.id, {}))
             return pr.frame(max(0.36, prev["duration"] - 1.0 / fps))
         except Exception:
             return None
@@ -413,17 +462,26 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
             if s.plays_clip_audio():
                 audio = clips.extract_audio(video_src, s.clip, work / f"clip_{i:03d}_audio.wav")
 
-            def make_frames(item=item, cues=cues, s=s, src=video_src, vinfo=vinfo):
+            def make_frames(item=item, cues=cues, s=s, src=video_src, vinfo=vinfo, i=i):
                 rend = StepRenderer(step=s, screenshot_path=shots / s.screenshot if s.screenshot else Path("_"),
                                     theme=theme, total_steps=len(steps), duration=item["duration"],
                                     step_no=item["no"])
                 box, inset = clips.placement(s.clip, rend.draw_box, rend.shot is not None, W, H,
                                              vinfo["width"], vinfo["height"])
                 base = rend.stage if inset else Image.new("RGB", (W, H), (0, 0, 0))
+                owner = video_owner.get(s.id)
+                if owner is not None and inset and vf_base.get(owner.id) is not None:
+                    base = vf_base[owner.id]                # the text over the video stays hidden until after it
                 n = max(1, int(round(item["duration"] * fps)))
-                return clips.frames(src, s.clip, base, box, fps, n,
-                                    lambda t: _cue_text_at(cues, t) if cues else "",
-                                    lambda img, text: draw_subtitle(img, text, theme))
+                frames = clips.frames(src, s.clip, base, box, fps, n,
+                                      lambda t: _cue_text_at(cues, t) if cues else "",
+                                      lambda img, text: draw_subtitle(img, text, theme))
+                prev = plan[i - 1] if i > 0 else None
+                if owner is None or (prev is not None and prev["kind"] == "step"
+                                     and video_owner.get(prev["step"].id) is owner):
+                    return frames
+                # the first video of a video-first slide opens that slide: it comes in like a slide change
+                return _fade_in(frames, _prev_slide_frame(i), theme.bg, fps, W, H)
         elif item["kind"] == "step":
             def make_frames(item=item, cues=cues, i=i):
                 s: Step = item["step"]
@@ -433,6 +491,7 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
                     theme=theme, total_steps=len(steps),
                     prev_point=item.get("prev_point"), duration=item["duration"], step_no=item["no"],
                     speech_offset=item.get("lead", 0.0), prev_frame=_prev_slide_frame(i),
+                    **vf_args.get(s.id, {}),
                 )
                 return _step_frames(rend, item["duration"], fps, cues, theme)
         elif item["kind"] == "intro":
@@ -546,6 +605,7 @@ def render_step_preview(proj: Project, step: Step, t: float = 1.2,
         total_steps=len(included),
         duration=max(2.5, step.duration or 3.0),
         step_no=included.index(step.id) + 1 if step.id in included else 0,
+        **_video_first_args(proj, step, theme),
     )
     img = rend.final_frame() if rend.reveal is not None else rend.frame(t)
     src = clips.resolve(proj.id, step.clip) if step.plays_video() else None
@@ -555,6 +615,11 @@ def render_step_preview(proj: Project, step: Step, t: float = 1.2,
             box, inset = clips.placement(step.clip, rend.draw_box, rend.shot is not None,
                                          theme.width, theme.height, info["width"], info["height"])
             img = rend.stage.copy() if inset else Image.new("RGB", (theme.width, theme.height), (0, 0, 0))
+            owner = slide_sequence.render_order(proj.steps)[1].get(step.id)
+            under = _video_first_base(proj, owner, theme, _video_first_args(proj, owner, theme)) \
+                if owner is not None and inset else None
+            if under is not None:
+                img = under.copy()                          # the text over the video stays hidden while it plays
             frame = clips.grab_frame(src, clips.clip_range(step.clip)[0] + t, box[2], box[3])
             if frame is not None:
                 img.paste(frame, (box[0], box[1]))

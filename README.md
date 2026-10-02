@@ -250,6 +250,7 @@ Each slide becomes a static step: centred page, slide transitions, subtitles bel
 Videos embedded in slides are kept: each becomes its own "video" step right after its slide (you can switch off "include videos" in the import dialog).
 
 - **Default:** the slide's narration is spoken first, then the video plays **at its original position on the slide with its own sound**; trim points set in PowerPoint are used
+- **Video first:** for slides whose callouts belong on top of the video, select the slide and set **Order of this slide and its video** to *Video first, then explain the text over the video*. The video plays first while the text lying over it (at least half of its area inside the video) stays hidden; afterwards the frame holds the video's last frame, that text appears point by point over it with the narration (with reveal switched off: in quick succession), and the rest of the slide is visible from the start. **① Write narration** then only explains the text over the video — regenerate it after changing the order. Hiding the text needs the reveal data from a PowerPoint import (see below); without it the whole slide is shown after the video
 - In the editor's **Video** panel: play in place / full screen / show the poster only; trim start and end (**⏱ Current position** picks the time from the player); play the original sound or mute it and read the step's narration; **🎤 Turn speech in the video into subtitles** transcribes it locally and aligns the subtitles
 - Videos that are only linked (a file on the author's computer, YouTube…) are left out until you **⬆ Upload video file**
 - PDFs contain no videos — import the `.pptx` to keep them
@@ -417,7 +418,7 @@ app.py                  entry point
 backend/main.py         FastAPI routes
 backend/storage.py      project files; background jobs merge their results back three-way
 backend/services/       script_gen (narration), llm* (providers), tts / tts_cloud / dialogue (voice-over),
-                        video / renderer / textlayout (rendering), slides / slide_reveal / clips (PPT import),
+                        video / renderer / textlayout (rendering), slides / slide_reveal / slide_sequence / clips (PPT import),
                         second_subs (second-language subtitles), asr / voice (speech), redact, cards …
 static/                 editor (plain HTML / CSS / JS) and locales/ (en, de, fr, pl, it, es, nl)
 extension/              Chrome MV3 extension
@@ -427,7 +428,7 @@ tests/                  regression tests
 ```
 
 - **Self-test** without the extension: `python tools/selftest.py --no-tts` (render only), `python tools/selftest.py` (with voice-over), `--llm` (with AI narration)
-- **Regression tests:** `.venv\Scripts\python.exe -X utf8 tests\run_all.py --lint` — 24 groups with synthetic data, fake AI and voice clients (no credits used), isolated data folders. See [tests/README.md](tests/README.md)
+- **Regression tests:** `.venv\Scripts\python.exe -X utf8 tests\run_all.py --lint` — 25 groups with synthetic data, fake AI and voice clients (no credits used), isolated data folders. See [tests/README.md](tests/README.md)
 - **Translations:** interface strings are written in Chinese inside `t()`; translations live in `static/locales/<lang>.json`. Run `python tools/i18n_extract.py` to list missing translations and mismatched placeholders (`--missing de` lists what German still needs, `--sync-extension` copies the extension's strings). Plurals use ICU syntax, e.g. `{n, plural, one {# step} other {# steps}}`
 
 ## Known limitations

@@ -140,6 +140,7 @@ class Step(BaseModel):
     slide_notes: str = ""     # speaker notes
 
     reveal: Optional[SlideReveal] = None      # reveal one by one (None = the whole slide appears at once)
+    sequence: str = ""        # how a slide with videos is presented: "" = narration first, then its videos | "video_first" (see slide_sequence)
 
     # --- video (kind == "video") ---
     clip: Optional[VideoClip] = None

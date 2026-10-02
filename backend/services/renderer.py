@@ -260,13 +260,19 @@ class StepRenderer:
     def __init__(self, step: Step, screenshot_path: Path, theme: Theme,
                  total_steps: int = 0, prev_point: Optional[Tuple[float, float]] = None,
                  duration: float = 4.0, step_no: int = 0, speech_offset: float = 0.0,
-                 prev_frame: Optional[Image.Image] = None):
+                 prev_frame: Optional[Image.Image] = None, under: Optional[List[Tuple[Image.Image, Tuple[int, int, int, int]]]] = None,
+                 over: Optional[List[bool]] = None, fade_in: bool = True):
         self.step = step
         self.theme = theme
         self.total_steps = total_steps
         self.step_no = step_no or step.index + 1     # step number in the final video (excluded steps don't count)
         self.speech_offset = speech_offset            # second at which the voice-over starts in this step (a short pause after a slide change)
         self.prev_frame = prev_frame                  # last frame of the previous slide: cross-fade from it instead of flashing black
+        # video-first slides (see slide_sequence): the videos' last frames [(frame, box)] lie under the text, and over[k] says
+        # whether reveal item k lies over a video (hidden while the video plays, revealed with the narration afterwards)
+        self.video_under = under or []
+        self.video_over = over
+        self.fade_in = fade_in                        # False right after this slide's own video: the picture continues without a fade
         self.duration = max(0.8, duration)
         self.W, self.H = theme.width, theme.height
         self.is_slide = step.kind in ("slide", "video")      # a video step uses its slide as the base image
@@ -282,8 +288,8 @@ class StepRenderer:
         self.stage = self._build_stage()
         # Slide reveal: not on redacted slides (the item images are unredacted originals); broken data falls back to the whole slide at once
         self.reveal = None
-        if (self.is_slide and step.kind == "slide" and theme.slide_reveal and step.reveal is not None
-                and step.reveal.enabled and not step.redactions and self.shot is not None):
+        if (self.is_slide and step.kind == "slide" and step.reveal is not None and not step.redactions
+                and self.shot is not None and ((theme.slide_reveal and step.reveal.enabled) or over is not None)):
             from .slide_reveal import build_anim
             try:
                 self.reveal = build_anim(self, Path(screenshot_path).parent)
@@ -312,17 +318,26 @@ class StepRenderer:
         self.target = self._target_rect()
         return self._click_point()
 
-    def still_after(self) -> float:
-        """After this time (seconds) the frame no longer changes; -1 means it keeps moving.
-
-        Slides only have a short fade-in at the start; after that every frame is identical and the previous frame can be reused,
-        saving lots of drawing. Recorded steps have elements that keep moving (cursor, breathing highlight).
-        """
-        return 0.35 if self.is_slide else -1.0
+    @classmethod
+    def layout_box(cls, step: Step, screenshot_path: Path, theme: "Theme") -> Tuple[Optional[Tuple[int, int, int, int]], bool]:
+        """(draw box of the screenshot on the canvas, whether there is a screenshot), reading only the image header."""
+        self = cls.__new__(cls)
+        self.step, self.theme = step, theme
+        self.W, self.H = theme.width, theme.height
+        self.is_slide = step.kind in ("slide", "video")
+        try:
+            with Image.open(screenshot_path) as im:
+                self.shot = SimpleNamespace(size=im.size)
+        except Exception:
+            self.shot = None
+        return self._layout(), self.shot is not None
 
     def frame_key(self, t: float):
-        """While the frame is static, return a key: two frames with the same key are identical and the previous one can be reused; None while moving."""
-        if not self.is_slide or t < 0.35:
+        """While the frame is static, return a key: two frames with the same key are identical and the previous one can be reused; None while moving.
+
+        Slides only move during the fade-in at the start (and while reveal items come in); recorded steps have elements that
+        keep moving (cursor, breathing highlight)."""
+        if not self.is_slide or (t < 0.35 and self.fade_in):
             return None
         if self.reveal is not None:
             return self.reveal.key(t)
@@ -573,7 +588,7 @@ class StepRenderer:
     def frame(self, t: float) -> Image.Image:
         if self.is_slide:
             img = self.reveal.compose(t) if self.reveal is not None else self.stage.copy()
-            if t < 0.35:   # slide change: cross-fade if the previous step is also a slide, otherwise fade in from the background color
+            if t < 0.35 and self.fade_in:   # slide change: cross-fade if the previous step is also a slide, otherwise fade in from the background color
                 k = ease_out_cubic(t / 0.35)
                 if self.prev_frame is not None and self.prev_frame.size == img.size:
                     img = Image.blend(self.prev_frame, img, k)

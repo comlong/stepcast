@@ -1696,6 +1696,35 @@ function renderSlideBox(s) {
   setField('#fSlideNotes', s.slide_notes || '');
   $('#btnUseNotes').disabled = !(s.slide_notes || '').trim();
   renderRevealBox(s);
+  renderSeqBox(s);
+}
+
+/** The video steps right after a slide belong to it (same rule as slide_sequence.videos_after in the backend). */
+function slideVideos(s) {
+  const steps = S.project.steps;
+  const out = [];
+  for (let i = steps.findIndex(x => x.id === s.id) + 1; i > 0 && i < steps.length && steps[i].kind === 'video'; i++) {
+    out.push(steps[i]);
+  }
+  return out;
+}
+
+/** Sequence of a slide with videos: narration first (default) or video first, then the text over the video. */
+function renderSeqBox(s) {
+  const vids = slideVideos(s);
+  $('#seqBox').classList.toggle('hidden', !vids.length);
+  if (!vids.length) return;
+  const first = s.sequence === 'video_first';
+  const hasData = !!(s.reveal && (s.reveal.items || []).length);
+  const revealOn = hasData && !!(S.project.settings || {}).slides_reveal && s.reveal.enabled !== false;
+  $('#fSequence').value = first ? 'video_first' : '';
+  $('#seqHint').textContent = !first
+    ? t('先讲这一页，讲完再播放这一页的视频。')
+    : !hasData
+      ? t('先播放视频，播完再显示整页。要让叠在视频上的文字播完后才出现，需要导入 PPT 时用本机 PowerPoint 生成「逐条出现」的数据。')
+      : revealOn
+        ? t('先播放视频，叠在视频上的文字这时先隐藏；播完后画面停在视频最后一帧，这些文字随解说一条条出现，解说只讲这些文字。改了顺序后请重新生成解说词。')
+        : t('先播放视频，叠在视频上的文字这时先隐藏；播完后画面停在视频最后一帧，这些文字很快依次出现。打开上面的逐条出现（整个项目和这一页），它们会随解说一条条出现。改了顺序后请重新生成解说词。');
 }
 
 /** Reveal one by one: the project-wide switch + this slide's switch. The data is generated with PowerPoint when importing the deck. */
@@ -2334,6 +2363,11 @@ function bindVoiceAndImport() {
     if (!hasReveal(s)) return;
     s.reveal.enabled = $('#fRevealPage').checked;
     saveStep({ reveal_enabled: s.reveal.enabled });
+    renderInspector(); renderStage();
+  };
+  $('#fSequence').onchange = async () => {
+    saveStep({ sequence: $('#fSequence').value });
+    await flushSaves();                               // the preview is rendered by the server from the saved step
     renderInspector(); renderStage();
   };
   $('#btnUseNotes').onclick = () => {

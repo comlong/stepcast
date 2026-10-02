@@ -1,7 +1,7 @@
 # Regression tests
 
 ```bat
-.venv\Scripts\python.exe -X utf8 tests\run_all.py           :: the regular 24 groups, about 10 minutes
+.venv\Scripts\python.exe -X utf8 tests\run_all.py           :: the regular 25 groups, about 10 minutes
 .venv\Scripts\python.exe -X utf8 tests\run_all.py -k reveal :: only tests whose name contains "reveal"
 .venv\Scripts\python.exe -X utf8 tests\run_all.py --lint    :: run ruff first (.venv\Scripts\pip install ruff)
 .venv\Scripts\python.exe -X utf8 tests\run_all.py --exe     :: also test dist\StepCast (run build_exe.bat first)

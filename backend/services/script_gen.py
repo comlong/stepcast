@@ -6,8 +6,9 @@ import re
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
 
-from .. import i18n
+from .. import i18n, storage
 from ..models import DialogueLine, Project, Step, drop_stale_lines, join_lines
+from . import slide_sequence
 from .llm import ChatClient, LLMError, get_client
 
 # One table for narration languages and second-language subtitles; its order is the order in the UI:
@@ -244,7 +245,10 @@ SLIDES_SYSTEM = """你是一名培训讲师，要把一份幻灯片讲成配音�
 7. 给了 content_items 时（页面上的内容块，已经按阅读顺序排好，视频里会随讲解一条条出现）：
    按这个顺序讲，讲到每一块时点出它的关键词，让观众能对上正在出现的那一块。
 8. 标了 "notes_are_script": true 的页：备注就是讲稿，只是语言和输出语言不同。用输出语言把备注完整、忠实地讲出来
-   （像口译一样，口语化但不删减、不概括、不另加内容，也不受详细程度限制），第 2、3 条对这种页不适用。"""  # i18n: ignore
+   （像口译一样，口语化但不删减、不概括、不另加内容，也不受详细程度限制），第 2、3 条对这种页不适用。
+9. 标了 "video_first": true 的页：这一页先播放视频，旁白在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
+   旁白只讲这几条文字（按顺序，讲到每条时点出它的关键词），可以用「刚才的视频里……」这类话承接；页面上的其他内容不讲。
+   没有 content_items 时，围绕刚播放的视频和这一页的标题简短说一两句。"""  # i18n: ignore
 
 SLIDES_TMPL = """请为下面这份幻灯片写配音旁白。  # i18n: ignore
 
@@ -339,10 +343,7 @@ def generate_slides_script(
                     d["notes"] = s.slide_notes[:3000]
                 if s.id in as_script:
                     d["notes_are_script"] = True
-                items = [it.text.replace("\r", " ").replace("\n", " ")[:120]
-                         for it in ((s.reveal.items if s.reveal and s.reveal.enabled else []) or []) if it.text.strip()]
-                if len(items) >= 2:
-                    d["content_items"] = items
+                _add_items(d, proj, s)
                 payload.append(d)
             prompt = SLIDES_TMPL.format(
                 lang=lang, detail=DETAIL_HINT.get(detail, detail),
@@ -410,18 +411,20 @@ DIALOGUE_SYSTEM = """你要把一份幻灯片写成两个人对话讲解的视�
 2. 不要因为是对话就压缩内容：备注和页面上的要点都要讲到，讲师讲的信息量不少于一个人单独讲这一页；主持人的话是额外加的。篇幅按「详细程度」来。
 3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。
 4. 封面、过渡页、只有一张图的页可以短，两三句即可。
+5. 标了 "video_first": true 的页：这一页先播放视频，台词在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
+   台词只讲这几条文字（按顺序一块一块地讲），可以从「刚才视频里……」接过来；页面上的其他内容不讲。没有 content_items 时围绕刚播放的视频简短聊几句。
 
 风格（最重要）——像两个熟悉的同事在录一档轻松的培训播客，而不是一问一答的考试：
-5. 主持人站在学员的角度：会接着讲师刚说的话往下问，会用自己的话复述、小结，会提出学员常见的疑问或误解，偶尔说出自己的第一感受；每句都短（一般不超过 25 字 / 15 个词）。
-6. 讲师先直接回应，再展开；可以举例子、打比方、给实用建议，偶尔反问主持人；语气自然（「其实」「说白了」「举个例子」这类口头连接词适量用）。
-7. 节奏要有变化：不要每轮都是「主持人一个问题 + 讲师一段回答」；可以讲师连着讲两句、主持人插一句追问，也可以主持人先抛出一个观点让讲师接着补充。一句台词只说一两句话，长内容拆成几句。
-8. 不要每句都「好问题」「没错」「对」开头，不要播音腔和书面语，不要每页都用「那……是什么？」开头；新的一页从上一页的话题自然接过来。
-9. 不要说「这一页」「如图所示」，不要逐字念要点列表，要把要点讲成人话。
+6. 主持人站在学员的角度：会接着讲师刚说的话往下问，会用自己的话复述、小结，会提出学员常见的疑问或误解，偶尔说出自己的第一感受；每句都短（一般不超过 25 字 / 15 个词）。
+7. 讲师先直接回应，再展开；可以举例子、打比方、给实用建议，偶尔反问主持人；语气自然（「其实」「说白了」「举个例子」这类口头连接词适量用）。
+8. 节奏要有变化：不要每轮都是「主持人一个问题 + 讲师一段回答」；可以讲师连着讲两句、主持人插一句追问，也可以主持人先抛出一个观点让讲师接着补充。一句台词只说一两句话，长内容拆成几句。
+9. 不要每句都「好问题」「没错」「对」开头，不要播音腔和书面语，不要每页都用「那……是什么？」开头；新的一页从上一页的话题自然接过来。
+10. 不要说「这一页」「如图所示」，不要逐字念要点列表，要把要点讲成人话。
 
 格式：
-10. 只输出 JSON。text 里只写这句话本身：不要写「主持人：」「讲师：」这样的说话人前缀，也不要称呼对方的名字或称谓（观众听不到名字）。
-11. 整个视频的第一页（position 为 first）由主持人简单开场、引出主题，最后一页（position 为 last）由主持人收尾；其余页不要重新打招呼。
-12. title 是这一页的短标题（不超过 12 字 / 5 词），优先用幻灯片原标题。intro / outro 是片头、片尾主持人一个人说的话，同样不带名字。
+11. 只输出 JSON。text 里只写这句话本身：不要写「主持人：」「讲师：」这样的说话人前缀，也不要称呼对方的名字或称谓（观众听不到名字）。
+12. 整个视频的第一页（position 为 first）由主持人简单开场、引出主题，最后一页（position 为 last）由主持人收尾；其余页不要重新打招呼。
+13. title 是这一页的短标题（不超过 12 字 / 5 词），优先用幻灯片原标题。intro / outro 是片头、片尾主持人一个人说的话，同样不带名字。
 
 风格示例（只示意说话的感觉，内容不要照抄）：
 host: 说到前脸，我第一眼注意到的就是这对大灯。
@@ -450,15 +453,33 @@ DIALOGUE_TMPL = """请为下面这份幻灯片写两人对话的讲解台词。 
 steps 必须覆盖输入的全部 i；who 只能是 host 或 expert；text 里不要写名字和说话人前缀。"""  # i18n: ignore
 
 
-def _slide_payload(s: Step, notes_mode: str) -> Dict[str, Any]:
+def _slide_payload(proj: Project, s: Step, notes_mode: str) -> Dict[str, Any]:
     d: Dict[str, Any] = {"i": s.index, "slide_title": s.page_title[:120], "slide_text": s.slide_text[:1500]}
     if notes_mode != "ignore" and s.slide_notes:
         d["notes"] = s.slide_notes[:3000]
-    items = [it.text.replace("\r", " ").replace("\n", " ")[:120]
-             for it in ((s.reveal.items if s.reveal and s.reveal.enabled else []) or []) if it.text.strip()]
+    _add_items(d, proj, s)
+    return d
+
+
+def _add_items(d: Dict[str, Any], proj: Project, s: Step) -> None:
+    """Add the slide's content items (reveal items in reading order) to its prompt entry.
+    Video-first slides (see slide_sequence) are marked, and only the text over their videos is listed: that is all the narration covers."""
+    def clean(text: str) -> str:
+        return text.replace("\r", " ").replace("\n", " ").replace("\x0b", " ")[:120]
+
+    all_items = (s.reveal.items if s.reveal else []) or []
+    if slide_sequence.is_video_first(s):
+        videos = slide_sequence.slide_videos(proj.steps, s)
+        if videos:
+            d["video_first"] = True
+            over = slide_sequence.over_video(s, videos, storage.screenshots_dir(proj.id))
+            items = [clean(it.text) for it, o in zip(all_items, over) if o and it.text.strip()]
+            if items:
+                d["content_items"] = items
+            return
+    items = [clean(it.text) for it in (all_items if s.reveal and s.reveal.enabled else []) if it.text.strip()]
     if len(items) >= 2:
         d["content_items"] = items
-    return d
 
 
 def set_lines(s: Step, lines: List[Dict[str, str]]) -> None:
@@ -503,7 +524,7 @@ def generate_dialogue_script(
                 progress(bi / max(1, len(batches)), i18n.t("AI 生成双人问答台词 {i}/{n}", i=bi + 1, n=len(batches)))
             payload = []
             for s in batch:
-                d = _slide_payload(s, notes_mode)
+                d = _slide_payload(proj, s, notes_mode)
                 if s.id == first_id:
                     d["position"] = "first"      # first slide of the whole video: the host opens
                 if s.id == last_id:
@@ -723,7 +744,7 @@ def rewrite_dialogue(proj: Project, step: Step, instruction: str,
     notes_mode = "ignore" if notes_mode == "ignore" else "reference"
     prompt = (
         f"视频标题：{proj.title}\n输出语言：{lang_name(proj.language)}\n"  # i18n: ignore
-        f"这一页的内容：{json.dumps(_slide_payload(step, notes_mode), ensure_ascii=False)}\n"  # i18n: ignore
+        f"这一页的内容：{json.dumps(_slide_payload(proj, step, notes_mode), ensure_ascii=False)}\n"  # i18n: ignore
         f"当前台词：{json.dumps([{'who': ln.who, 'text': ln.text} for ln in step.lines], ensure_ascii=False)}\n\n"  # i18n: ignore
         f"改写要求：{instruction}"  # i18n: ignore
     )

@@ -21,8 +21,8 @@ from . import config, i18n, storage
 from .models import (CardStyle, CaptureStepReq, DialogueLine, Project, Rect, RedactionsReq,
                      RedactScanReq, RenderReq, ScriptReq, SlidesCreateReq, StartCaptureReq, Step,
                      Target, TranslateReq, TTSReq, drop_stale_lines, join_lines)
-from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slides,
-                       tts, tts_cloud, video, voice)
+from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
+                       slides, tts, tts_cloud, video, voice)
 
 app = FastAPI(title="StepCast", version="1.8.0")
 
@@ -430,6 +430,10 @@ def patch_step(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
                     s.narration = text
                 if "reveal_enabled" in body and s.reveal is not None:
                     s.reveal.enabled = bool(body["reveal_enabled"])      # whether this slide reveals points one by one
+                if "sequence" in body:
+                    if body["sequence"] not in slide_sequence.SEQUENCES or s.kind != "slide":
+                        raise HTTPException(400, i18n.t("不支持的播放顺序"))
+                    s.sequence = body["sequence"]                         # how this slide and its videos are presented
                 if body.get("target_rect"):
                     if s.target is None:
                         s.target = Target()

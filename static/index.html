@@ -164,6 +164,14 @@
             <label class="switch"><input type="checkbox" id="fRevealPage"> 这一页逐条出现</label>
             <p class="small muted" id="revealHint" style="margin:4px 0 0"></p>
           </div>
+          <div id="seqBox" class="hidden" style="margin-top:14px">
+            <label class="field"><span>这一页和视频的播放顺序</span>
+              <select id="fSequence">
+                <option value="">先讲解，再播放视频</option>
+                <option value="video_first">先播放视频，播完再讲叠在视频上的文字</option>
+              </select></label>
+            <p class="small muted" id="seqHint" style="margin:4px 0 0"></p>
+          </div>
         </div>
 
         <div id="videoBox" class="hidden">
