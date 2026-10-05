@@ -24,7 +24,7 @@ from .models import (CardStyle, CaptureStepReq, DialogueLine, Project, Rect, Red
 from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
                        slides, tts, tts_cloud, video, voice)
 
-app = FastAPI(title="StepCast", version="1.8.0")
+app = FastAPI(title="StepCast", version="1.8.1")
 
 # ---- local access only ---------------------------------------------------
 # The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
