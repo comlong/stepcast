@@ -293,8 +293,18 @@ def _fade_in(frames, prev: Optional[Image.Image], bg: Tuple[int, int, int], fps:
 
 # ---- main flow -------------------------------------------------------------
 
-def render_project(proj: Project, progress: Progress = None,
-                   overrides: Optional[dict] = None) -> Dict[str, object]:
+def preview_size(cfg: dict, max_width: int = 1280, max_fps: int = 24) -> Dict[str, int]:
+    """Size and frame rate of a playback preview: the project's picture shape at (at most) 1280 px wide and 24 fps."""
+    W, H = int(cfg.get("video_width", 1920)), int(cfg.get("video_height", 1080))
+    k = min(1.0, max_width / max(1, W))
+    return {"video_width": max(2, int(round(W * k / 2)) * 2), "video_height": max(2, int(round(H * k / 2)) * 2),
+            "video_fps": min(max_fps, int(cfg.get("video_fps", 30)))}
+
+
+def render_project(proj: Project, progress: Progress = None, overrides: Optional[dict] = None,
+                   preview_out: Optional[Path] = None) -> Dict[str, object]:
+    """Render the project's included steps. With preview_out the video goes to that file instead (a playback preview of a few pages):
+    the real video and its subtitle files are left alone, and intro / outro follow the overrides only."""
     t_start = time.time()
     cfg = effective_config(proj, overrides)
     theme = Theme.from_config(cfg)
@@ -304,22 +314,23 @@ def render_project(proj: Project, progress: Progress = None,
     work = storage.work_dir(proj.id) / f"render_{uuid.uuid4().hex[:8]}"
     work.mkdir(parents=True, exist_ok=True)
     try:
-        return _render(proj, cfg, theme, W, H, fps, burn, work, progress, t_start)
+        return _render(proj, cfg, theme, W, H, fps, burn, work, progress, t_start, preview_out)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
 def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, burn: bool,
-            work: Path, progress: Progress, t_start: float) -> Dict[str, object]:
+            work: Path, progress: Progress, t_start: float, preview_out: Optional[Path] = None) -> Dict[str, object]:
     shots = storage.screenshots_dir(proj.id)
     auds = storage.audio_dir(proj.id)
     out_dir = storage.output_dir(proj.id)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    if preview_out is None:
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     # video-first slides: their videos are rendered in front of them
     order, video_owner = slide_sequence.render_order(proj.steps)
     steps = [s for s in order if s.include]
-    if not steps:
+    if not steps and preview_out is None:
         raise FFmpegError(i18n.t("没有启用的步骤，无法生成视频。"))
     # their renderer arguments (the videos' last frames …) and the background while their videos play, prepared once
     vf_args = {s.id: _video_first_args(proj, s, theme) for s in steps if slide_sequence.is_video_first(s)}
@@ -362,6 +373,8 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
                      "audio": outro_audio, "text": proj.outro, "audio_dur": d})
         cursor_t += dur
     total_dur = cursor_t
+    if not plan:
+        raise FFmpegError(i18n.t("没有启用的步骤，无法生成视频。"))
 
     # --- 2. subtitles ---
     global_cues: List[subs.Cue] = []
@@ -384,11 +397,12 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
 
     slug = _safe_name(proj.title or proj.name)
     srt_path = out_dir / f"{slug}.srt"
-    subs.write_srt(global_cues, srt_path)
-    subs.write_vtt(global_cues, out_dir / f"{slug}.vtt")
-    # main subtitle timeline: second-language subtitles (external) can be generated later without re-rendering
-    second_subs.save_primary(out_dir, f"{slug}.mp4", global_cues, proj.language, burned=burn, space=theme.sub_space,
-                             bottom=sub_bottom(theme))
+    if preview_out is None:                  # (a preview must not touch the subtitle files of the real video)
+        subs.write_srt(global_cues, srt_path)
+        subs.write_vtt(global_cues, out_dir / f"{slug}.vtt")
+        # main subtitle timeline: second-language subtitles (external) can be generated later without re-rendering
+        second_subs.save_primary(out_dir, f"{slug}.mp4", global_cues, proj.language, burned=burn, space=theme.sub_space,
+                                 bottom=sub_bottom(theme))
 
     # --- 3. render the segments ---
     total_frames = sum(max(1, int(round(p["duration"] * fps))) for p in plan)
@@ -557,12 +571,14 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
     if progress:
         progress(0.97, i18n.t("合并片段…"))
     out_name = f"{slug}.mp4"
-    out_path = out_dir / out_name
+    out_path = preview_out or (out_dir / out_name)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     part = work / "final.mp4"
     _concat(clip_paths, part, work, reencode=(encoder == "mixed"))
     storage._replace_with_retry(part, out_path)   # replace the file in one go after writing, so a player never reads half a file
 
-    proj.output = out_name
+    if preview_out is None:
+        proj.output = out_name
     elapsed = time.time() - t_start
     warning = ""
     if bad_audio:
@@ -573,10 +589,13 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
         progress(1.0, done_msg + (" " + warning if warning else ""))
     return {
         "warning": warning,
-        "file": out_name,
+        "file": out_path.name,
         "duration": round(total_dur, 2),
         "size": out_path.stat().st_size if out_path.exists() else 0,
-        "srt": srt_path.name,
+        "srt": srt_path.name if preview_out is None else "",
+        # where each step lies in the video (the editor follows the playback in the step list)
+        "segments": [{"id": (it["step"].id if it["kind"] == "step" else "__%s__" % it["kind"]),
+                      "start": round(it["start"], 2), "end": round(it["start"] + it["duration"], 2)} for it in plan],
         "elapsed": round(elapsed, 1),
         "steps": len(steps),
         "encoder": encoder,          # encoder actually used: libx264 = CPU, h264_nvenc/qsv/amf = GPU

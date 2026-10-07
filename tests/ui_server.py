@@ -23,4 +23,4 @@ class SlowSettings(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-uvicorn.run(app, host="127.0.0.1", port=8770, log_level="warning")
+uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PORT") or 8770), log_level="warning")   # PORT: set when 8770 is taken by something else

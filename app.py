@@ -19,6 +19,26 @@ import webbrowser
 from backend import config
 
 
+def _quiet_connection_resets() -> None:
+    """On Windows, a browser that closes a connection in the middle of a transfer (seeking or stopping a video, closing the tab) makes asyncio print
+    a long traceback for a harmless ConnectionResetError. Swallow exactly that error when the transport is torn down."""
+    if sys.platform != "win32":
+        return
+    try:
+        from asyncio import proactor_events
+        transport = proactor_events._ProactorBasePipeTransport
+        original = transport._call_connection_lost
+
+        def _call_connection_lost(self, exc):
+            try:
+                original(self, exc)
+            except (ConnectionResetError, ConnectionAbortedError):
+                pass
+        transport._call_connection_lost = _call_connection_lost
+    except Exception:
+        pass
+
+
 def main() -> int:
     # when output is redirected to a file or the console isn't UTF-8, printing characters like ✓ must not crash the program.
     # when redirected to a file, always write UTF-8 and flush per line: Chinese / German in the log doesn't turn into question marks, and nothing is lost if the program is killed
@@ -84,6 +104,7 @@ def main() -> int:
                 pass
         threading.Thread(target=_open, daemon=True).start()
 
+    _quiet_connection_resets()
     uvicorn.run(
         "backend.main:app" if args.reload else _get_app(),
         host=args.host, port=port, reload=args.reload, log_level="warning",

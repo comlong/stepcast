@@ -16,7 +16,13 @@ const S = {
   mode: 'shot',          // shot | render
   saveTimer: null,
   audio: new Audio(),
+  multi: false,          // choosing several pages to play in a row
+  picked: new Set(),     // the pages chosen
+  lastPick: '',
 };
+
+/** Playback of pages as the final video shows them (rendered by the server as a small H.264 video). */
+const PLAY = { active: false, token: 0, job: '', segs: [], now: '' };
 
 /* ---------- API ---------- */
 
@@ -160,6 +166,8 @@ function fillVoiceSelect(sel, locale, selected) {
 /* ---------- projects ---------- */
 
 async function openProject(pid) {
+  stopPlayback();
+  S.picked.clear(); S.multi = false;
   await flushSaves();
   try {
     S.project = await api('/api/projects/' + pid);
@@ -211,7 +219,9 @@ async function showProjects() {
     b.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm(t('删除这个项目？截图、语音和视频都会被永久删除。'))) return;
-      await api('/api/projects/' + b.dataset.del, { method: 'DELETE' });
+      try {
+        await api('/api/projects/' + b.dataset.del, { method: 'DELETE' });
+      } catch (err) { toast(err.message, true); return; }      // e.g. a job that wouldn't stop in time
       if (S.project && S.project.id === b.dataset.del) {
         PENDING.steps.clear(); PENDING.project = null; PENDING.pid = '';
         S.project = null; location.href = '/'; return;
@@ -271,14 +281,17 @@ function renderSteps() {
   if (!p) { list.innerHTML = ''; return; }
   $('#stepCount').textContent = p.steps.filter(s => s.include).length;
 
+  const playBits = (id) => `<input type="checkbox" class="pick" ${S.picked.has(id) ? 'checked' : ''}>
+      <button class="play-one" title="${escapeHtml(t('回放这一页'))}">▶</button>`;
   const cardRow = (id, icon, label, sub, on) => `
-    <div class="step-card card-step ${id === S.stepId ? 'active' : ''} ${on ? '' : 'excluded'}"
+    <div class="step-card card-step ${id === S.stepId ? 'active' : ''} ${on ? '' : 'excluded'} ${S.picked.has(id) ? 'picked' : ''} ${PLAY.now === id ? 'playing' : ''}"
          data-id="${id}">
       <div class="card-ico ${id === '__outro__' ? 'end' : ''}">${icon}</div>
       <div class="meta">
         <div class="t">${label}</div>
         <div class="d">${escapeHtml(sub || t('未设置，不会出现在视频里'))}</div>
       </div>
+      ${playBits(id)}
     </div>`;
 
   const introBg = cardStyle('intro').image ? cardStyle('intro').source : '';
@@ -293,7 +306,7 @@ function renderSteps() {
         : (p.title || p.intro || introBg ? off : ''), introOn),
     p.steps.length
       ? p.steps.map((s, i) => `
-    <div class="step-card ${s.id === S.stepId ? 'active' : ''} ${s.include ? '' : 'excluded'}"
+    <div class="step-card ${s.id === S.stepId ? 'active' : ''} ${s.include ? '' : 'excluded'} ${S.picked.has(s.id) ? 'picked' : ''} ${PLAY.now === s.id ? 'playing' : ''}"
          data-id="${s.id}" draggable="true">
       <span class="no">${i + 1}</span>
       <img src="${s.screenshot ? fileUrl('screenshots', s.screenshot)
@@ -303,15 +316,20 @@ function renderSteps() {
         <div class="t"><span class="kind-dot k-${escapeHtml(s.kind)}"></span>${escapeHtml(s.title || KIND_LABEL[s.kind] || s.kind)}</div>
         <div class="d">${escapeHtml(s.narration || stepSummary(s))}</div>
       </div>
+      ${playBits(s.id)}
     </div>`).join('')
       : `<p class="muted small" style="padding:10px 6px">${t('还没有录制步骤')}</p>`,
     cardRow('__outro__', '✓', t('片尾'),
       outroOn ? (p.outro || bgOnly(outroBg)) : (p.outro || outroBg ? off : ''), outroOn),
   ].join('');
   list.innerHTML = html;
+  list.classList.toggle('multi', S.multi);
+  updateMultiBar();
 
   $$('#stepList .step-card').forEach(card => {
     card.onclick = () => selectStep(card.dataset.id);
+    card.querySelector('.pick').onclick = (e) => { e.stopPropagation(); togglePick(card.dataset.id, e.shiftKey, e.target.checked); };
+    card.querySelector('.play-one').onclick = (e) => { e.stopPropagation(); startPlayback([card.dataset.id]); };
     if (card.classList.contains('card-step')) return;   // intro and outro aren't reorderable
     card.ondragstart = (e) => { e.dataTransfer.setData('text/plain', card.dataset.id); card.style.opacity = .4; };
     card.ondragend = () => { card.style.opacity = 1; $$('.step-card').forEach(c => c.classList.remove('dragover')); };
@@ -453,6 +471,150 @@ function selectStep(id) {
   renderSteps(); renderStage(); renderInspector();
 }
 
+/* ---------- playing pages ---------- */
+
+/** All the pages in list order, intro and outro included (what "from here to the end" and shift-click ranges are counted in). */
+function pageOrder() {
+  return ['__intro__', ...S.project.steps.map(s => s.id), '__outro__'];
+}
+
+function updateMultiBar() {
+  $('#multiBar').classList.toggle('hidden', !S.multi);
+  $('#btnMulti').classList.toggle('primary', S.multi);
+  const n = S.picked.size;
+  $('#mbCount').textContent = n ? t('已选 {n} 页', { n }) : t('还没选');
+  $('#mbPlay').disabled = !n;
+}
+
+function setPicked(ids) {
+  S.picked = new Set(ids);
+  $$('#stepList .step-card').forEach(card => {
+    const on = S.picked.has(card.dataset.id);
+    card.classList.toggle('picked', on);
+    card.querySelector('.pick').checked = on;
+  });
+  updateMultiBar();
+}
+
+function togglePick(id, range, on) {
+  const picked = new Set(S.picked);
+  const order = pageOrder();
+  if (range && S.lastPick && order.includes(S.lastPick)) {
+    const [a, b] = [order.indexOf(S.lastPick), order.indexOf(id)].sort((x, y) => x - y);
+    order.slice(a, b + 1).forEach(k => (on ? picked.add(k) : picked.delete(k)));
+  } else if (on) picked.add(id); else picked.delete(id);
+  S.lastPick = id;
+  setPicked(picked);
+}
+
+function setMulti(on) {
+  S.multi = on;
+  if (on && !S.picked.size && S.stepId) { S.picked = new Set([S.stepId]); S.lastPick = S.stepId; }
+  renderSteps();
+}
+
+function setPlayStatus(msg, frac) {
+  $('#playMsg').textContent = msg || '';
+  $('#playBar').classList.toggle('hidden', frac === null || frac === undefined);
+  if (frac !== null && frac !== undefined) $('#playBar > div').style.width = Math.round(frac * 100) + '%';
+}
+
+function updatePlayButtons() {
+  $('#btnStopPlay').classList.toggle('hidden', !PLAY.active);
+  $('#btnPlayPage').disabled = !S.project || (!currentStep() && !isCard());
+}
+
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+/** Play pages (a slide goes with the videos on it): the server renders them as the final video would show them, then the player starts. */
+async function startPlayback(ids) {
+  if (!S.project) return;
+  if (!ids.length) { toast(t('请先选择要播放的页面'), true); return; }
+  await flushSaves();                                  // what you just changed has to be in it
+  const token = ++PLAY.token;
+  if (PLAY.job) api(`/api/jobs/${PLAY.job}/cancel`, { method: 'POST' }).catch(() => null);
+  S.audio.pause();                                     // a voice-over being auditioned would play over the video
+  const v = $('#playVideo');
+  v.pause(); v.removeAttribute('src'); v.load(); v.classList.add('hidden');
+  PLAY.active = true; PLAY.segs = []; PLAY.now = ''; PLAY.job = '';
+  setPlayStatus(t('正在生成回放…'), 0.02);
+  renderStage(); renderSteps(); updatePlayButtons();
+  let job;
+  try {
+    job = await api(`/api/projects/${S.project.id}/playback`, { method: 'POST', body: { steps: ids } });
+  } catch (e) { if (token === PLAY.token) { stopPlayback(); toast(e.message, true); } return; }
+  if (token !== PLAY.token) {                          // stopped (or replaced) before the server had answered: don't let it render for nothing
+    api(`/api/jobs/${job.id}/cancel`, { method: 'POST' }).catch(() => null);
+    return;
+  }
+  PLAY.job = job.id;
+  while (token === PLAY.token) {
+    let j;
+    try { j = await api('/api/jobs/' + job.id); } catch (e) { await sleep(1200); continue; }
+    if (token !== PLAY.token) return;
+    if (j.status === 'running' || j.status === 'pending') { setPlayStatus(j.message, j.progress); await sleep(450); continue; }
+    PLAY.job = '';
+    if (j.status === 'error') { stopPlayback(); toast(j.error, true); return; }
+    if (j.status !== 'done') { stopPlayback(); return; }          // stopped
+    PLAY.segs = (j.result && j.result.segments) || [];
+    v.src = fileUrl('preview', j.result.file);
+    v.classList.remove('hidden');
+    setPlayStatus('', null);
+    v.play().catch(() => {});
+    if (j.result.warning) toast(j.result.warning, true);
+    return;
+  }
+}
+
+/** Stop: cancels the page that is still being made, stops the player and goes back to editing. */
+function stopPlayback() {
+  const was = PLAY.active;
+  PLAY.token++;
+  if (PLAY.job) api(`/api/jobs/${PLAY.job}/cancel`, { method: 'POST' }).catch(() => null);
+  PLAY.job = ''; PLAY.active = false; PLAY.segs = []; PLAY.now = '';
+  const v = $('#playVideo');
+  if (v) { v.pause(); v.removeAttribute('src'); v.load(); v.classList.add('hidden'); }
+  if (was && S.project) { renderStage(); renderSteps(); }
+  updatePlayButtons();
+}
+
+/** While playing, mark the page that is on in the step list. */
+function followPlayback() {
+  const t0 = $('#playVideo').currentTime;
+  const seg = PLAY.segs.find(x => t0 >= x.start && t0 < x.end) || PLAY.segs[PLAY.segs.length - 1];
+  const id = seg ? seg.id : '';
+  if (id === PLAY.now) return;
+  PLAY.now = id;
+  $$('#stepList .step-card').forEach(card => {
+    const on = card.dataset.id === id;
+    card.classList.toggle('playing', on);
+    if (on) card.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+function bindPlayback() {
+  $('#btnPlayPage').onclick = () => { if (S.project && (S.stepId)) startPlayback([S.stepId]); };
+  $('#btnStopPlay').onclick = stopPlayback;
+  $('#btnMulti').onclick = () => setMulti(!S.multi);
+  $('#mbDone').onclick = () => setMulti(false);
+  $('#mbNone').onclick = () => setPicked([]);
+  $('#mbAll').onclick = () => setPicked(['__intro__', ...S.project.steps.filter(s => s.include).map(s => s.id), '__outro__']);
+  $('#mbFrom').onclick = () => {
+    const order = pageOrder();
+    const from = Math.max(0, order.indexOf(S.stepId));
+    setPicked(order.slice(from).filter(id => isCard(id) || (S.project.steps.find(s => s.id === id) || {}).include));
+  };
+  $('#mbPlay').onclick = () => startPlayback([...S.picked]);
+  const v = $('#playVideo');
+  v.ontimeupdate = followPlayback;
+  v.onplay = followPlayback;
+  v.onended = () => setPlayStatus(t('播放完了。点「■ 停止播放」回到编辑，或者再点播放键重看'), null);
+  v.onerror = () => { if (PLAY.active && v.getAttribute('src')) { stopPlayback(); toast(t('回放文件读不出来，请再试一次'), true); } };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && PLAY.active && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || '')) stopPlayback();
+  });
+}
+
 /* ---------- center preview ---------- */
 
 function viewportOf(s) {
@@ -464,6 +626,14 @@ function renderStage() {
   const card = isCard();
   const s = currentStep();
   const empty = !s && !card;
+  updatePlayButtons();
+  $('#playWrap').classList.toggle('hidden', !PLAY.active);
+  if (PLAY.active) {
+    ['#shotWrap', '#previewImg', '#stageVideo', '#emptyState'].forEach(id => $(id).classList.add('hidden'));
+    if (!$('#stageVideo').paused) $('#stageVideo').pause();
+    $('#stageHint').textContent = t('正在回放（■ 停止播放，或按 Esc，回到编辑）');
+    return;
+  }
   const mode = card ? 'render' : S.mode;
   $('#emptyState').classList.toggle('hidden', !empty);
   const video = $('#stageVideo');
@@ -493,6 +663,8 @@ function renderStage() {
       video.dataset.src = url;
       video.src = url;
       video.onloadedmetadata = () => { video.currentTime = s.clip.start || 0; };
+      // formats the browser can't play (wmv, avi, some mov / mkv): the final video is not affected, only this player
+      video.onerror = () => { $('#stageHint').textContent = t('这个视频的格式浏览器放不了；点「▶ 回放本页」看成片里的实际效果'); };
     }
     $('#stageHint').textContent = t('拖动进度条找到想要的起止点，再点右边的「当前位置」');
     return;
@@ -934,7 +1106,8 @@ async function watchProjectJobs() {
   if (!S.project || S.jobActive) return;
   try {
     const { jobs } = await api('/api/jobs?project_id=' + S.project.id);
-    const run = jobs.find(j => (j.status === 'running' || j.status === 'pending') && !POLLING.has(j.id));
+    // (a playback being made has its own player and stop button)
+    const run = jobs.find(j => (j.status === 'running' || j.status === 'pending') && j.kind !== 'playback' && !POLLING.has(j.id));
     if (run) await pollJob(run.id, JOB_LABEL[run.kind] || t('后台任务'));
   } catch (e) { /* */ }
 }
@@ -972,7 +1145,7 @@ function llmPreset(pid) {
   return ((S.settings.llm || {}).providers || []).find(p => p.id === pid);
 }
 
-/* Keys of the paid voice services (Doubao, MiniMax, Qwen) */
+/* Keys and settings of the paid voice services (Doubao, MiniMax, Qwen, Gemini, ElevenLabs, Azure) */
 function ttsDraft(id) {
   S.ttsDrafts = S.ttsDrafts || {};
   return S.ttsDrafts[id] || (S.ttsDrafts[id] = {});
@@ -994,8 +1167,21 @@ function renderTtsFields() {
   else st = t('未设置');
   $('#sTtsState').textContent = st;
   $('#btnTtsClear').classList.toggle('hidden', x.key_from !== 'config' || !!d.clear_key);
-  $('#sTtsVoicesWrap').classList.toggle('hidden', id !== 'doubao');
+  $('#sTtsVoicesWrap').classList.toggle('hidden', !['doubao', 'elevenlabs'].includes(id));
   $('#sTtsVoices').value = d.voices !== undefined ? d.voices : (x.voices || '');
+  // the service's own settings (model, region …)
+  const extra = $('#sTtsExtra');
+  extra.innerHTML = (x.fields || []).map(f => {
+    const val = d.f && d.f[f.key] !== undefined ? d.f[f.key] : f.value;
+    const ctl = f.choices.length
+      ? `<select data-f="${escapeHtml(f.key)}">${f.choices.map(c =>
+        `<option value="${escapeHtml(c.value)}" ${c.value === val ? 'selected' : ''}>${escapeHtml(c.label)}</option>`).join('')}</select>`
+      : `<input type="text" data-f="${escapeHtml(f.key)}" value="${escapeHtml(val)}" spellcheck="false">`;
+    return `<label class="field"><span>${escapeHtml(f.label)}</span>${ctl}</label>`;
+  }).join('');
+  extra.querySelectorAll('[data-f]').forEach(el => {
+    el.oninput = el.onchange = () => { (ttsDraft(id).f = ttsDraft(id).f || {})[el.dataset.f] = el.value; };
+  });
 }
 
 function ttsSettingsPatch() {
@@ -1005,6 +1191,7 @@ function ttsSettingsPatch() {
     if ((d.api_key || '').trim()) e.api_key = d.api_key.trim();
     if (d.clear_key) e.clear_key = true;
     if (d.voices !== undefined) e.voices = d.voices.trim();
+    if (d.f) Object.assign(e, d.f);
     if (Object.keys(e).length) out[id] = e;
   }
   return out;
@@ -1183,6 +1370,7 @@ function bindUI() {
   initHighlightDrag();
   initRedactDrag();
   bindVoiceAndImport();
+  bindPlayback();
 
   // redaction
   $('#btnRedactMode').onclick = () => setRedactMode(!S.redactMode);
@@ -1728,7 +1916,13 @@ function renderSeqBox(s) {
 }
 
 /** Reveal one by one: the project-wide switch + this slide's switch. The data is generated with PowerPoint when importing the deck. */
-function hasReveal(s) { return !!(s && s.reveal && (s.reveal.items || []).length >= 2); }
+/** The things the narration is lined up with: the steps of the author's PowerPoint animation, or the items grouped by position. */
+function revealCount(s) {
+  const items = (s && s.reveal && s.reveal.items) || [];
+  if (s && s.reveal && s.reveal.mode === 'timeline') return new Set(items.filter(it => it.beat >= 0).map(it => it.beat)).size;
+  return items.length;
+}
+function hasReveal(s) { return !!(s && s.reveal && revealCount(s) >= (s.reveal.mode === 'timeline' ? 1 : 2)); }
 
 function renderRevealBox(s) {
   const any = S.project.steps.some(hasReveal);
@@ -1741,7 +1935,8 @@ function renderRevealBox(s) {
   $('#revealHint').textContent = !any
     ? t('这个项目没有逐条出现的数据：导入 PPT 时勾选「逐条出现」才会生成（需要本机 PowerPoint）。')
     : !here ? t('这一页内容不多或排版太复杂，整页一起出现。')
-      : t('这一页分成 {n} 条：解说说到哪条，哪条就出现。', { n: s.reveal.items.length });
+      : s.reveal.mode === 'timeline' ? t('这一页按 PPT 的动画分成 {n} 步：解说说到哪一步，那一步的内容就出现。', { n: revealCount(s) })
+        : t('这一页分成 {n} 条：解说说到哪条，哪条就出现。', { n: s.reveal.items.length });
 }
 
 function renderVideoBox(s) {

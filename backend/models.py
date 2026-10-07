@@ -79,12 +79,29 @@ class RevealItem(BaseModel):
     x: int = 0                # position on the page image (pixels; the page image is this step's screenshot)
     y: int = 0
     text: str = ""            # the item's text, used to find when the narration talks about it
+    # Only in "timeline" slides (the author's PowerPoint animations, see slide_timeline); items are then layers in z-order, bottom first
+    beat: int = -1            # the step (one click of the animation) in which it appears; -1 = there from the start
+    offset: float = 0.0       # seconds after the start of that step (PowerPoint's own delays inside one click)
+    anim: str = "fade"        # "appear" = at once | "fade" = fade in and float up slightly | "wipe" = uncovered from `side` | "fly" = slides in from `side`
+    exit_beat: int = -1       # the step in which it disappears again; -1 = never
+    exit_offset: float = 0.0
+    after_media: bool = False # appears only after the slide's video has played
+    media: bool = False       # the video itself (its picture on the slide); replaced by the video's last frame when it played first
+    dur: float = 0.45         # how long coming in takes (seconds)
+    side: str = ""            # the side a "wipe" / "fly" starts from: top | right | bottom | left, or a corner of a fly ("top-left" …)
+    motion_beat: int = -1     # a motion path (a light spot sliding along a line): the step it starts in, -1 = none
+    motion_offset: float = 0.0
+    motion_dur: float = 0.0
+    motion_path: str = ""     # as PowerPoint writes it: "M 0 0 L 0.47 0.62 E" (fractions of the slide)
+    motion_accel: float = 0.0
+    motion_decel: float = 0.0
 
 
 class SlideReveal(BaseModel):
     """Data for "reveal points one by one + highlight the current one" on a slide; generated with PowerPoint on import."""
     clean: str = ""           # page image with all items hidden (under screenshots/)
-    items: List[RevealItem] = Field(default_factory=list)   # in reading order
+    items: List[RevealItem] = Field(default_factory=list)   # in reading order ("timeline": layers in z-order)
+    mode: str = ""            # "" = items grouped by position | "timeline" = layers following the PowerPoint animations
     enabled: bool = True      # whether this slide uses it (only when the project-wide switch is on)
     # AI alignment result: where each item starts being discussed in the narration (character offset, -1 = not mentioned).
     # align_key fingerprints "narration + item texts" at alignment time; once the narration changes it no longer matches and is re-aligned before rendering
@@ -320,6 +337,10 @@ class TTSReq(BaseModel):
     rate: str = ""
     volume: str = ""
     only_missing: bool = True
+
+
+class PlaybackReq(BaseModel):
+    steps: List[str] = Field(default_factory=list)   # step ids to play (and "__intro__" / "__outro__"); a slide goes with its videos
 
 
 class RenderReq(BaseModel):

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -13,6 +12,8 @@ from . import asr, ffmpeg_util
 
 Progress = Optional[Callable[[float, str], None]]
 
+MAX_STEP_BYTES = 200 * 1024 ** 2       # largest upload for one step's voice-over / a dictation
+MAX_SESSION_BYTES = 2 * 1024 ** 3      # largest recording of a whole session (narrate while recording)
 MAX_STEP_SECONDS = 120        # longest voice-over per step (recorded or uploaded), in seconds; the editor's recorder limits voice-over recordings to 60 seconds
 
 
@@ -210,13 +211,12 @@ def _import_session(proj: Project, src: Path, session: Path, rec_start_ms: float
             "mode": mode, "language": r["language"]}
 
 
-def save_upload(upload, dst_dir: Path, prefix: str = "upload") -> Path:
-    """Write a FastAPI UploadFile to disk."""
+def save_upload(upload, dst_dir: Path, prefix: str = "upload", max_bytes: int = MAX_STEP_BYTES) -> Path:
+    """Write a FastAPI UploadFile to disk (storage.UploadTooLarge if it is bigger than max_bytes)."""
     dst_dir.mkdir(parents=True, exist_ok=True)
     suffix = Path(upload.filename or "").suffix.lower() or ".webm"
     if suffix not in (".webm", ".ogg", ".mp3", ".wav", ".m4a", ".aac", ".flac", ".opus", ".mp4"):
         suffix = ".webm"
     dst = dst_dir / f"{prefix}{suffix}"
-    with open(dst, "wb") as f:
-        shutil.copyfileobj(upload.file, f)
+    storage.copy_limited(upload.file, dst, max_bytes)
     return dst

@@ -27,9 +27,22 @@
     <aside id="steps">
       <div class="pane-head">
         <span>步骤 <b id="stepCount">0</b></span>
-        <span><button class="sm" id="btnInsertVideo" title="插入一段视频（放在当前这一步后面）">🎬 ＋</button>
+        <span><button class="sm" id="btnMulti" title="选几页连续观看（每一页的卡片上也有 ▶，可以单独回放那一页）">▶ 连播</button>
+          <button class="sm" id="btnInsertVideo" title="插入一段视频（放在当前这一步后面）">🎬 ＋</button>
           <button class="sm" id="btnRefresh" title="重新加载">↻</button></span>
         <input type="file" id="insertVideoFile" accept="video/*,.mp4,.mov,.wmv,.avi,.mkv,.webm,.m4v" hidden>
+      </div>
+      <div id="multiBar" class="hidden">
+        <div class="row wrap" style="gap:5px">
+          <button class="xs" id="mbAll" title="选中所有放进成片的页">全选</button>
+          <button class="xs" id="mbFrom" title="从当前这一页选到最后">从当前页起</button>
+          <button class="xs" id="mbNone">清空</button>
+          <span class="small muted grow" id="mbCount"></span>
+        </div>
+        <div class="row" style="gap:6px;margin-top:6px">
+          <button class="primary sm grow" id="mbPlay">▶ 播放所选</button>
+          <button class="sm" id="mbDone">完成</button>
+        </div>
       </div>
       <div id="stepList"></div>
     </aside>
@@ -41,6 +54,8 @@
         <button class="sm" id="btnRedactMode" title="在截图上拖动框选要打码的区域">🔒 打码</button>
         <span class="small muted" id="stageHint">拖动橙色框可调整高亮区域</span>
         <div class="grow"></div>
+        <button class="sm" id="btnPlayPage" title="把这一页按成片的效果放一遍（动画、配音、字幕；页里的视频也一起放）">▶ 回放本页</button>
+        <button class="sm danger hidden" id="btnStopPlay" title="停止播放（Esc）">■ 停止播放</button>
         <button class="sm" id="btnPlayAudio" title="试听这一步的配音">🔊 试听</button>
         <button class="sm danger" id="btnDeleteStep">删除此步</button>
       </div>
@@ -63,6 +78,13 @@
         </div>
         <img id="previewImg" class="hidden" alt="">
         <video id="stageVideo" class="hidden" controls preload="metadata"></video>
+        <div id="playWrap" class="hidden">
+          <video id="playVideo" class="hidden" controls playsinline></video>
+          <div id="playStatus">
+            <div id="playMsg" class="small muted"></div>
+            <div id="playBar"><div></div></div>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -321,6 +343,7 @@
         <p class="small notes-hint" id="sTtsHint"></p>
         <label class="field"><span>API Key</span>
           <input type="password" id="sTtsKey" placeholder="粘贴新的 Key；留空 = 保持原来的" autocomplete="off" spellcheck="false"></label>
+        <div id="sTtsExtra"></div>
         <label class="field hidden" id="sTtsVoicesWrap"><span>自己的音色 ID（可选，比如复刻的声音；多个用逗号分开）</span>
           <input type="text" id="sTtsVoices" spellcheck="false"></label>
         <div class="row" style="margin:6px 0 4px">
@@ -535,7 +558,7 @@
         <input type="file" id="imFile" accept=".pptx,.ppt,.pdf" hidden>
         <div class="drop-ico">⬆</div>
         <div data-i18n><b>点击选择文件</b>，或拖到这里</div>
-        <div class="small muted" style="margin-top:4px">.pptx / .ppt / .pdf，最多 100 页 · 每一页变成视频里的一个步骤 · 页面里的视频会保留，动画和切换效果不会</div>
+        <div class="small muted" style="margin-top:4px">.pptx / .ppt / .pdf，最多 100 页 · 每一页变成视频里的一个步骤 · 页面里的视频会保留；本机装有 PowerPoint 时页面动画也会保留（见下方选项），切换效果不会</div>
       </label>
       <div class="small muted" id="imStatus" style="margin-top:10px"></div>
     </div>
@@ -583,7 +606,7 @@
         <label class="switch hidden" id="imVideosWrap" style="align-self:end;margin-bottom:14px">
           <input type="checkbox" id="imVideos" checked> 包含幻灯片里的视频</label>
         <label class="switch hidden" id="imRevealWrap" style="align-self:end;margin-bottom:14px"
-               title="解说说到哪一条，那一条才出现；讲到下一条时，前面讲过的变淡。需要本机 PowerPoint，导入会慢一些。">
+               title="解说说到哪一条，那一条才出现；讲到下一条时，前面讲过的变淡。设了动画的页，按 PPT 里的动画顺序和上下层次出现。需要本机 PowerPoint，导入会慢一些。">
           <input type="checkbox" id="imReveal" checked> 逐条出现，突出当前讲的内容</label>
       </div>
       <p class="small" id="imPrivacy"></p>

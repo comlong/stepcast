@@ -3,7 +3,7 @@
     .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py            # the regular groups
     .venv\\Scripts\\python.exe -X utf8 tests\\run_all.py -k reveal  # only tests whose name contains "reveal"
     ... --exe    also test the packaged dist\\StepCast (build it first)
-    ... --ppt    also test reveal export with real PowerPoint (PowerPoint must not be open)
+    ... --ppt    also test reveal export and slide animations with real PowerPoint (PowerPoint must not be open)
     ... --lint   run ruff first
 
 All tests run in tests/_work/ with their own data folders and config.json, never touching the user's projects or settings;
@@ -26,7 +26,8 @@ TESTS = ["test_regress", "test_i18n", "test_i18n_core", "test_outro", "test_llm"
          "test_cards", "test_review_fixes", "test_parallel_render", "test_video_steps", "test_video_steps2",
          "test_review2", "test_encoder_fallback", "test_stability", "test_reveal_unit", "test_switch_lang",
          "test_dialogue", "test_llm_cn", "test_tts_cloud", "test_review3", "test_second_subs", "test_notes_lang",
-         "test_languages", "test_video_first"]
+         "test_languages", "test_video_first", "test_upload_delete", "test_slide_timeline", "test_slide_anim_render", "test_playback",
+         "test_tts_parallel"]
 BAD = re.compile(r"\[FAIL\]|Traceback \(most recent call last\)|失败 \d+ 项|结果: 失败|有 \d+ 处不一致")
 
 
@@ -93,9 +94,9 @@ def main() -> int:
         names.append("test_exe")
     if a.ppt:
         if powerpoint_running():
-            print("== test_reveal_ppt: PowerPoint 正开着，跳过（测试不会关掉你的 PowerPoint）")
+            print("== test_reveal_ppt / test_anim_ppt: PowerPoint 正开着，跳过（测试不会关掉你的 PowerPoint）")
         else:
-            names.append("test_reveal_ppt")
+            names += ["test_reveal_ppt", "test_anim_ppt"]
     failed = [] if not a.lint or lint() else ["lint"]
     for n in names:
         if not run(n):

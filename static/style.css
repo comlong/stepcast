@@ -386,3 +386,22 @@ button.xs { padding: 2px 8px; font-size: 11px; border-radius: 6px; }
   font-size: 12px; color: var(--muted); }
 #vPlayer::cue { background: rgba(8, 10, 14, .72); color: #fff; font-size: 56%; line-height: 1.1; font-style: italic; }
 #vPlayer.upright::cue { font-style: normal; }
+
+/* ---------- playback of pages, and choosing several to play in a row ---------- */
+#multiBar { padding: 8px 10px; border-bottom: 1px solid var(--line); background: #11161d; flex: none; }
+.step-card .pick { display: none; position: absolute; right: 7px; top: 6px; width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: var(--accent); }
+#stepList.multi .step-card .pick { display: block; }
+.step-card.picked { border-color: #6c4a43; }
+.step-card .play-one {
+  position: absolute; right: 6px; bottom: 6px; width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  font-size: 10px; line-height: 22px; text-align: center; opacity: 0; background: rgba(0,0,0,.6); color: #fff;
+}
+.step-card:hover .play-one, .step-card.playing .play-one { opacity: .95; }
+.step-card .play-one:hover:not(:disabled) { background: var(--accent); }
+.step-card.playing { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2) inset; }
+#playWrap { display: flex; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+#playVideo { display: block; max-width: 100%; max-height: calc(100vh - 290px); border-radius: 8px; background: #000; }
+#playStatus { width: min(560px, 92%); text-align: center; }
+#playBar { height: 4px; margin-top: 6px; border-radius: 2px; background: #222b37; overflow: hidden; }
+#playBar > div { height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+#playBar.hidden { display: none; }

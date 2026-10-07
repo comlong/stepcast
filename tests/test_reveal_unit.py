@@ -226,6 +226,20 @@ check("整页只有图片：翻页后一张张快速出现（不突出当前）"
 nar = "Blue comes first. Then green. Red is last."
 off = [s[0] for s in R.sentences(nar)]
 check("解说切句", len(off) == 3 and nar[off[1]:].startswith("Then"), R.sentences(nar))
+LONG = ("In a classic workshop, power is routed through a belt, a pulley, a shaft, and a set of gears to drive every machine on the floor. "
+        "The new layout changes this.")
+ls = R.sentences(LONG)
+check("很长的一句在逗号处再切开，每段的位置都是原文里的真实位置",
+      len(ls) == 3 and all(LONG[o:].startswith(t) for o, t in ls) and ls[0][1].endswith("belt,") and ls[-1][1] == "The new layout changes this.", ls)
+check("不太长的句子不切", [t for _, t in R.sentences("Blue comes first, then green. Red is last.")] == ["Blue comes first, then green.", "Red is last."])
+num = "The price is 1,000 dollars, 2,500 for the pro model, and 4,000 for the max model, with a long list of extras included in every single one of them."
+check("数字里的逗号不是切点", not any(t.endswith("1,") or t.startswith("000") for _, t in R.sentences(num)), R.sentences(num))
+zh_long = "这是一个很长的句子，里面列了很多东西，比如钢笔、尺子、橡皮、三角板，还有笔记本和文件夹，最后总结一下整体的摆放方式。"
+zs = R.sentences(zh_long)
+check("中文长句也按逗号切，每段至少十几个字", len(zs) >= 3 and all(zh_long[o:].startswith(t) for o, t in zs) and all(len(t) >= 12 for _, t in zs[:-1]), zs)
+pl_long = R.plan(["a", "b", "c"], CT[:3], LONG, [], 20.0, 22.0, align=[ls[0][0], ls[1][0], ls[2][0]])
+check("对齐到分句：同一长句里的三项分散在句子的不同时间，不是挤在句首", pl_long is not None and pl_long[0][0] < pl_long[0][1] < pl_long[0][2]
+      and pl_long[0][2] - pl_long[0][0] > 5.0, pl_long)
 pl = R.plan(["红色", "绿色", "蓝色"], CT[:3], nar, [], 6.0, 7.0, align=[off[2], off[1], off[0]])
 check("有 AI 对齐：按解说讲的顺序出现（先蓝后绿再红）", pl is not None and pl[1] and pl[0][2] < pl[0][1] < pl[0][0],
       pl and [round(x, 2) for x in pl[0]])
@@ -248,6 +262,17 @@ check("同一拍的两条互不变淡，前一句的那条变淡",
       [im.getpixel((x, 120)) for x in (70, 170, 270)])
 an = R.RevealAnim(bg, lay, [0.0, 2.0, 3.0], 6.0, rise=0)
 check("时间为 0 的条目直接画进底图", an.compose(0.1).getpixel((70, 120)) == COL[0] and an.animated == [1, 2])
+
+# a picture in front of another one (item order = stacking order): when the front one is dimmed, the one behind must not shine through it
+back = (Image.new("RGBA", (100, 100), (200, 30, 30, 255)), 100, 100)
+front = (Image.new("RGBA", (60, 60), (30, 30, 200, 255)), 120, 120)
+third = (Image.new("RGBA", (20, 20), (30, 200, 30, 255)), 300, 200)
+an = R.RevealAnim(bg, [back, front, third], [3.0, 1.0, 5.0], 8.0, rise=0)       # the front one comes first, the one behind it later
+px = an.compose(3.0 + R.DIM + 0.3).getpixel((150, 150))
+want = tuple(int(BG[i] + (front[0].getpixel((0, 0))[i] - BG[i]) * R.FOCUS_ALPHA) for i in range(3))
+check("前面那张变暗后仍不透明，后面那张透不出来（只是颜色往底色靠）", near(px, want, 8), (px, want))
+check("后面那张自己不受影响（仍是满色）", an.compose(3.0 + R.DIM + 0.3).getpixel((105, 105)) == (200, 30, 30))
+check("最后一刻恢复满色", an.compose(7.9).getpixel((150, 150)) == (30, 30, 200))
 
 print("\n== 5. AI 对齐：渲染前自动做，解说没变就不再问 ==")
 from backend.services import llm as llm_mod  # noqa: E402

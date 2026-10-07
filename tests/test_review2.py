@@ -226,4 +226,21 @@ vs = [s for s in steps(vp) if s["kind"] == "video"][0]
 mf = clips.media_dir(vp) / vs["clip"]["file"]
 check("视频文件是硬链接（和导入目录共用一份数据）", mf.exists() and os.stat(mf).st_nlink == 2, os.stat(mf).st_nlink)
 
+print("\n== 9. 字幕断句：数字里的小数点不是句号 ==")
+from backend.services.tts import split_sentences as sp  # noqa: E402
+check("「5.7 公斤」不断开，句末的句号仍然断", sp("这个盒子重 5.7 公斤。很轻。") == ["这个盒子重 5.7 公斤。", "很轻。"],
+      sp("这个盒子重 5.7 公斤。很轻。"))
+check("英文：数字、版本号、网址里的点不断，句子之间的点断",
+      sp("The box weighs 5.7 kg. See v1.8.1 at example.com now.") == ["The box weighs 5.7 kg.", "See v1.8.1 at example.com now."],
+      sp("The box weighs 5.7 kg. See v1.8.1 at example.com now."))
+check("句号后面直接跟大写字母或汉字，还是断句", sp("It opens the chapter.Nova is fast.") == ["It opens the chapter.", "Nova is fast."]
+      and sp("Costs 3.5.很快") == ["Costs 3.5.", "很快"], (sp("It opens the chapter.Nova is fast."), sp("Costs 3.5.很快")))
+check("句号后面跟着引号再有空格：引号留在上一句", sp('He said "stop." Then left.') == ['He said "stop."', "Then left."], sp('He said "stop." Then left.'))
+long = "一二三四五六七八九十一二三四五六七八5.7公斤只需要很短的时间非常快"
+lines = sp(long, 20)
+check("没有标点的长句硬切时，不从数字中间劈开", all("5.7" not in x or x.count("5.7") == 1 for x in lines) and "".join(lines) == long
+      and not any(x.endswith("5") or x.endswith("5.") or x.startswith(".7") or x.startswith("7") for x in lines), lines)
+cs = subs.segment_to_cues(subs.Segment(0.0, 6.0, "这个盒子重 5.7 公斤。很轻。", []))
+check("字幕里「5.7」留在同一页", [c.text for c in cs] == ["这个盒子重 5.7 公斤。", "很轻。"], [c.text for c in cs])
+
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))

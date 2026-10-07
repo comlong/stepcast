@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 from .. import i18n, storage
 from ..models import DialogueLine, Project, Step, drop_stale_lines, join_lines
-from . import slide_sequence
+from . import slide_sequence, slide_timeline
 from .llm import ChatClient, LLMError, get_client
 
 # One table for narration languages and second-language subtitles; its order is the order in the UI:
@@ -248,7 +248,10 @@ SLIDES_SYSTEM = """你是一名培训讲师，要把一份幻灯片讲成配音�
    （像口译一样，口语化但不删减、不概括、不另加内容，也不受详细程度限制），第 2、3 条对这种页不适用。
 9. 标了 "video_first": true 的页：这一页先播放视频，旁白在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
    旁白只讲这几条文字（按顺序，讲到每条时点出它的关键词），可以用「刚才的视频里……」这类话承接；页面上的其他内容不讲。
-   没有 content_items 时，围绕刚播放的视频和这一页的标题简短说一两句。"""  # i18n: ignore
+   没有 content_items 时，围绕刚播放的视频和这一页的标题简短说一两句。
+10. 标了 "steps_in_order": true 的页：content_items 是页面上随点击一步一步出现的内容。旁白必须严格按这个顺序，一项不漏地讲到每一项
+   （不要调换顺序，不要合并，不要跳过），每一项至少用一句话单独讲，并说出这一项文字里的关键词（原文是外语就用输出语言里的对应说法），
+   让观众在这一项出现的时候正好听到它。"""  # i18n: ignore
 
 SLIDES_TMPL = """请为下面这份幻灯片写配音旁白。  # i18n: ignore
 
@@ -409,7 +412,7 @@ DIALOGUE_SYSTEM = """你要把一份幻灯片写成两个人对话讲解的视�
 内容：
 1. 台词完全依据页面内容（标题、正文、备注）；不要编造页面和备注里都没有的数据、结论。
 2. 不要因为是对话就压缩内容：备注和页面上的要点都要讲到，讲师讲的信息量不少于一个人单独讲这一页；主持人的话是额外加的。篇幅按「详细程度」来。
-3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。
+3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。标了 "steps_in_order": true 的页，顺序和每一项都必须严格遵守：不能调换、合并或漏掉任何一项。
 4. 封面、过渡页、只有一张图的页可以短，两三句即可。
 5. 标了 "video_first": true 的页：这一页先播放视频，台词在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
    台词只讲这几条文字（按顺序一块一块地讲），可以从「刚才视频里……」接过来；页面上的其他内容不讲。没有 content_items 时围绕刚播放的视频简短聊几句。
@@ -468,6 +471,16 @@ def _add_items(d: Dict[str, Any], proj: Project, s: Step) -> None:
         return text.replace("\r", " ").replace("\n", " ").replace("\x0b", " ")[:120]
 
     all_items = (s.reveal.items if s.reveal else []) or []
+    if s.reveal is not None and s.reveal.mode == "timeline":
+        # the author's animations: the steps in the order they come in (one step = a card with its text)
+        first = bool(slide_sequence.is_video_first(s) and slide_sequence.slide_videos(proj.steps, s))
+        steps = [clean(t) for t in slide_timeline.unit_texts(all_items, only_after_media=first) if t.strip()]
+        if first:
+            d["video_first"] = True
+        if steps and (first or (s.reveal.enabled and len(steps) >= 2)):
+            d["content_items"] = steps
+            d["steps_in_order"] = True               # they come in one click at a time: the narration has to follow that order
+        return
     if slide_sequence.is_video_first(s):
         videos = slide_sequence.slide_videos(proj.steps, s)
         if videos:

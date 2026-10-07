@@ -39,6 +39,20 @@ def videos_after(steps: Sequence[Step], i: int) -> List[Step]:
     return out
 
 
+def page_steps(steps: Sequence[Step], ids: Sequence[str]) -> List[Step]:
+    """The steps to play for the chosen ones, in project order: a slide goes with the videos after it, a video with its slide
+    (and that slide's other videos), so a page is always played as a whole. Other steps (recordings, inserted videos) stand alone."""
+    want = set(ids)
+    take = set(want)
+    for i, s in enumerate(steps):
+        if s.kind != "slide":
+            continue
+        vids = videos_after(steps, i)
+        if s.id in want or any(v.id in want for v in vids):
+            take |= {s.id} | {v.id for v in vids}
+    return [s for s in steps if s.id in take]
+
+
 def render_order(steps: Sequence[Step]) -> Tuple[List[Step], Dict[str, Step]]:
     """Order in which the steps are rendered: the videos of a video-first slide move in front of it (only when the
     slide itself is included). Also returns {video step id: its video-first slide}."""
@@ -81,6 +95,8 @@ def over_video(slide: Step, videos: Sequence[Step], shots_dir: Path) -> List[boo
     rv = slide.reveal
     if rv is None or not rv.items:
         return []
+    if rv.mode == "timeline":                    # the author's animations say exactly what comes in after the video
+        return [it.after_media and it.beat >= 0 for it in rv.items]
     page = _size(shots_dir / rv.clean) if rv.clean else None
     if page is None and slide.screenshot:
         page = _size(shots_dir / slide.screenshot)

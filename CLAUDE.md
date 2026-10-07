@@ -39,9 +39,9 @@ A local tutorial video generator: the Chrome extension records browser actions, 
 - `backend/services/`
   - `jobs.py`: background jobs; jobs listed in `HEAVY` are mutually exclusive per project.
   - `script_gen.py`: narration (recordings / slides / two-person Q&A); `llm.py` + `llm_openai.py` / `llm_anthropic.py`: providers (`Preset`).
-  - `tts.py` (Edge voices, dispatch by voice-id prefix), `tts_cloud.py` (Doubao / MiniMax / Qwen; voice ids prefixed `doubao:` etc.), `voice.py`, `dialogue.py` (per-line synthesis for Q&A).
+  - `tts.py` (Edge voices, dispatch by voice-id prefix), `tts_cloud.py` (Doubao / MiniMax / Qwen / Gemini / ElevenLabs / Azure; voice ids prefixed `doubao:` etc.; per-service extra settings are `Service.fields`, shown generically in the settings page), `voice.py`, `dialogue.py` (per-line synthesis for Q&A).
   - `video.py` (rendering, parallel segments, encoder fallback), `renderer.py` (PIL frames: subtitles, cursor, zoom, slide layout), `textlayout.py`, `gdi_text.py`.
-  - `slides.py` (PPT/PDF import, export via PowerPoint / LibreOffice), `slide_reveal.py` (reveal points one by one, aligned to narration sentences), `slide_sequence.py` (order of a slide and its videos: narration first, or video first with the text over the video revealed afterwards).
+  - `slides.py` (PPT/PDF import, export via PowerPoint / LibreOffice), `slide_reveal.py` (reveal points one by one, aligned to narration sentences; earlier items are dimmed by tinting them toward the background, never by alpha, so the layer behind never shines through), `slide_sequence.py` (order of a slide and its videos: narration first, or video first with the text over the video revealed afterwards), `slide_timeline.py` (a slide's own PowerPoint animations: effects → click steps and z-ordered transparent layers, exported over black and white; `slide_reveal.TimelineAnim` plays them).
   - `second_subs.py` (second-language subtitles: VTT/SRT, web player package), `subtitles.py`, `langdetect.py`, `clips.py`, `asr.py`, `redact.py`, `cards.py` (intro / outro), `ffmpeg_util.py`.
 - `static/`: the editor (`index.html`, `app.js`, `style.css`); `extension/`: the Chrome extension.
 - `tools/`: `i18n_extract.py` (translation checks), `selftest.py`, `dump_llm_payload.py` (prints what would be sent to the model, offline).

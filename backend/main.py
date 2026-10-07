@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
@@ -18,13 +19,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 
 from . import config, i18n, storage
-from .models import (CardStyle, CaptureStepReq, DialogueLine, Project, Rect, RedactionsReq,
+from .models import (CardStyle, CaptureStepReq, DialogueLine, PlaybackReq, Project, Rect, RedactionsReq,
                      RedactScanReq, RenderReq, ScriptReq, SlidesCreateReq, StartCaptureReq, Step,
                      Target, TranslateReq, TTSReq, drop_stale_lines, join_lines)
 from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
                        slides, tts, tts_cloud, video, voice)
 
-app = FastAPI(title="StepCast", version="1.8.1")
+app = FastAPI(title="StepCast", version="1.9.0")
 
 # ---- local access only ---------------------------------------------------
 # The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
@@ -67,6 +68,78 @@ class LocalOnly:
         return await self.app(scope, receive, send)
 
 
+# Largest accepted upload per route. The multipart parser spools a whole upload to disk before a route runs, so the size is checked
+# while the body arrives (UploadLimit); the routes copy with storage.copy_limited as well.
+UPLOAD_LIMITS = [
+    (re.compile(r"^/api/projects/[^/]+/steps/[^/]+/video$"), clips.MAX_BYTES),
+    (re.compile(r"^/api/projects/[^/]+/steps/video$"), clips.MAX_BYTES),
+    (re.compile(r"^/api/import/slides$"), slides.MAX_BYTES),
+    (re.compile(r"^/api/projects/[^/]+/card/[^/]+/background$"), cards.MAX_BYTES),
+    (re.compile(r"^/api/transcribe$"), voice.MAX_STEP_BYTES),
+    (re.compile(r"^/api/projects/[^/]+/steps/[^/]+/voice$"), voice.MAX_STEP_BYTES),
+    (re.compile(r"^/api/projects/[^/]+/magic-mic$"), voice.MAX_SESSION_BYTES),
+]
+UPLOAD_OVERHEAD = 1024 * 1024        # multipart framing and the other form fields
+
+
+class _Oversize(BaseException):
+    """Raised inside the request body stream; BaseException so the form parser can't turn it into a 400."""
+
+
+class UploadLimit:
+    """Answer 413 to an upload that is too big, without reading it onto the disk."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        limit = 0
+        if scope["type"] == "http" and scope["method"] == "POST":
+            limit = next((m for rx, m in UPLOAD_LIMITS if rx.match(scope["path"])), 0)
+        if not limit:
+            return await self.app(scope, receive, send)
+        too_big = JSONResponse({"detail": str(storage.UploadTooLarge(limit))}, status_code=413)
+        limit += UPLOAD_OVERHEAD
+        try:
+            declared = int(dict(scope["headers"]).get(b"content-length", b"0"))
+        except ValueError:
+            declared = 0
+        if declared > limit:
+            while True:          # read the rest and drop it, so the browser still gets to see the answer
+                msg = await receive()
+                if msg["type"] != "http.request" or not msg.get("more_body"):
+                    break
+            return await too_big(scope, receive, send)
+        seen = 0
+
+        async def counted():
+            nonlocal seen
+            msg = await receive()
+            if msg["type"] == "http.request":
+                seen += len(msg.get("body", b""))
+                if seen > limit:             # no (or a wrong) Content-Length
+                    raise _Oversize()
+            return msg
+
+        started = False
+
+        async def watch(msg):
+            nonlocal started
+            started = started or msg["type"] == "http.response.start"
+            await send(msg)
+        try:
+            await self.app(scope, counted, watch)
+        except _Oversize:
+            if not started:
+                await too_big(scope, receive, send)
+
+
+@app.exception_handler(storage.UploadTooLarge)
+async def _upload_too_large(request: Request, exc: storage.UploadTooLarge):
+    return JSONResponse({"detail": str(exc)}, status_code=413)
+
+
+app.add_middleware(UploadLimit)
 app.add_middleware(
     CORSMiddleware,
     allow_origin_regex=r"^chrome-extension://[a-p]{32}$",
@@ -100,8 +173,10 @@ def _keep_done_on_stop(pid: str, before: Project, proj: Project, **commit_kw):
 
 def _submit(kind: str, fn, pid: str = "", exclusive=None):
     try:
-        return jobs.submit(kind, fn, pid, exclusive=exclusive)
-    except jobs.JobConflict as e:
+        return jobs.submit(kind, fn, pid, exclusive=exclusive, exists=storage.exists)
+    except jobs.ProjectGone as e:
+        raise HTTPException(404, str(e))
+    except (jobs.JobConflict, jobs.ProjectClosing) as e:
         raise HTTPException(409, str(e))
 
 # Current recording state (shared by the extension and the editor)
@@ -362,7 +437,12 @@ def patch_project(pid: str, body: Dict[str, Any] = Body(...)):
 
 @app.delete("/api/projects/{pid}")
 def delete_project(pid: str):
-    return {"ok": storage.delete(pid)}
+    # stop the project's jobs first: a render still running would write into the folder (or create it again) after it is gone
+    with jobs.closing(pid):
+        left = jobs.stop_project(pid)
+        if left:
+            raise HTTPException(409, str(jobs.JobConflict(left[0])))
+        return {"ok": storage.delete(pid)}
 
 
 @app.put("/api/projects/{pid}/steps")
@@ -655,7 +735,6 @@ def _step_or_404(proj: Project, sid: str) -> Step:
 # ---- video steps -------------------------------------------------------------
 
 def _video_upload(file: UploadFile, prefix: str) -> Path:
-    import shutil
     name = file.filename or "video.mp4"
     if Path(name).suffix.lower() not in clips.VIDEO_EXT:
         raise HTTPException(400, i18n.t("不支持的视频格式：{ext}（支持 mp4 / mov / wmv / avi / mkv / webm 等）",
@@ -663,14 +742,13 @@ def _video_upload(file: UploadFile, prefix: str) -> Path:
     tmp_dir = config.DATA_DIR / "_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp = tmp_dir / (_tmp_name(prefix) + Path(name).suffix.lower())
-    with open(tmp, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    storage.copy_limited(file.file, tmp, clips.MAX_BYTES)
     return tmp
 
 
-def _submit_upload(kind: str, work, pid: str, tmp: Path):
+def _submit_upload(kind: str, work, pid: str, tmp: Path, exclusive=("render", "auto")):
     try:
-        return _submit(kind, work, pid, exclusive={"render", "auto"})
+        return _submit(kind, work, pid, exclusive=exclusive)
     except HTTPException:
         tmp.unlink(missing_ok=True)          # refused because a render is running: delete the uploaded temp file too
         raise
@@ -839,7 +917,7 @@ def step_voice_upload(pid: str, sid: str, file: UploadFile = File(...),
                       language: str = Form("")):
     """Use the recorded or uploaded audio as this step's voice-over."""
     _step_or_404(_need(pid), sid)
-    src = voice.save_upload(file, storage.work_dir(pid), _tmp_name(f"voice_{sid}"))
+    src = voice.save_upload(file, config.DATA_DIR / "_tmp", _tmp_name(f"voice_{sid}"), voice.MAX_STEP_BYTES)
 
     def work(job: jobs.Job):
         try:
@@ -852,7 +930,7 @@ def step_voice_upload(pid: str, sid: str, file: UploadFile = File(...),
             return r
         finally:
             src.unlink(missing_ok=True)
-    return _submit("voice", work, pid)
+    return _submit_upload("voice", work, pid, src, exclusive=None)
 
 
 @app.post("/api/projects/{pid}/steps/{sid}/voice/ai")
@@ -902,7 +980,7 @@ def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = 
                      mode: str = Form("ai"), language: str = Form("")):
     """Narrate while recording: the extension uploads the whole recording when recording stops; transcribe it and split it across the steps by action time."""
     _need(pid)
-    src = voice.save_upload(file, storage.work_dir(pid), _tmp_name("session"))
+    src = voice.save_upload(file, config.DATA_DIR / "_tmp", _tmp_name("session"), voice.MAX_SESSION_BYTES)
 
     def work(job: jobs.Job):
         try:
@@ -921,14 +999,13 @@ def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = 
             return r
         finally:
             src.unlink(missing_ok=True)
-    return _submit("magic_mic", work, pid)
+    return _submit_upload("magic_mic", work, pid, src, exclusive=None)
 
 
 # ---- PPT / PDF to video -------------------------------------------------------
 
 @app.post("/api/import/slides")
 def slides_upload(file: UploadFile = File(...)):
-    import shutil
     name = file.filename or "slides.pptx"
     ext = Path(name).suffix.lower()
     if ext not in (".pptx", ".ppt", ".pdf"):
@@ -936,8 +1013,7 @@ def slides_upload(file: UploadFile = File(...)):
     tmp_dir = config.DATA_DIR / "_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp = tmp_dir / (_tmp_name("slides") + ext)
-    with open(tmp, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    storage.copy_limited(file.file, tmp, slides.MAX_BYTES)
     slides.cleanup_old_imports()
 
     def work(job: jobs.Job):
@@ -996,7 +1072,6 @@ def _card_kind(kind: str) -> str:
 @app.post("/api/projects/{pid}/card/{kind}/background")
 def card_background_upload(pid: str, kind: str, file: UploadFile = File(...)):
     """Use your own intro / outro background: an image or one page of a PPT / PDF (PPT needs conversion, done as a background job)."""
-    import shutil
     _card_kind(kind)
     _need(pid)
     name = file.filename or "background.png"
@@ -1006,8 +1081,7 @@ def card_background_upload(pid: str, kind: str, file: UploadFile = File(...)):
     tmp_dir = config.DATA_DIR / "_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp = tmp_dir / (_tmp_name("card") + ext)
-    with open(tmp, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    storage.copy_limited(file.file, tmp, cards.MAX_BYTES)
 
     def work(job: jobs.Job):
         try:
@@ -1208,12 +1282,13 @@ def gen_tts(pid: str, req: TTSReq):
     return _submit("tts", work, pid, exclusive=jobs.HEAVY)
 
 
-def _align_reveal(pid: str, job: jobs.Job, lo: float, hi: float) -> None:
+def _align_reveal(pid: str, job: jobs.Job, lo: float, hi: float, only: Optional[Set[str]] = None) -> None:
     """Before rendering: for slides whose narration changed, let the AI mark which narration sentence starts each item (works across languages and paraphrases).
-    Slides with unchanged narration reuse the previous result; without AI, or on AI errors, this is skipped and rendering matches the text instead."""
+    Slides with unchanged narration reuse the previous result; without AI, or on AI errors, this is skipped and rendering matches the text instead.
+    only = just these steps (a playback of a few pages), whether or not they are left out of the video."""
     from .services import slide_reveal
     _, proj = _snapshot(pid)
-    steps = [s for s in proj.steps if s.include]
+    steps = [s for s in proj.steps if (s.id in only if only is not None else s.include)]
     if not (proj.settings or {}).get("slides_reveal") or not any(slide_reveal.needs_align(s) for s in steps):
         return
     try:
@@ -1228,9 +1303,49 @@ def _align_reveal(pid: str, job: jobs.Job, lo: float, hi: float) -> None:
         for st in p.steps:
             r = res.get(st.id)
             if r and st.reveal is not None and \
-                    slide_reveal.align_key(st.narration, [it.text for it in st.reveal.items]) == r[1]:
+                    slide_reveal.align_key(st.narration, slide_reveal.reveal_texts(st)) == r[1]:
                 st.reveal.align, st.reveal.align_key = r
     storage.update(pid, _do)
+
+
+PREVIEW_KEEP = 3
+
+
+@app.post("/api/projects/{pid}/playback")
+def start_playback(pid: str, req: PlaybackReq):
+    """Render a few pages as a small H.264 video to watch in the editor: what the final video will show for them (animation, voice-over,
+    subtitles), whatever format the videos on them are in. The real video and its subtitle files are not touched."""
+    _need(pid)
+    ids = [i for i in req.steps if isinstance(i, str)]
+    if not ids:
+        raise HTTPException(400, i18n.t("请先选择要播放的页面"))
+    for j in jobs.active(pid):
+        if j["kind"] == "playback":
+            jobs.cancel(j["id"])                 # a new request replaces the one that is still being made
+
+    def work(job: jobs.Job):
+        # the same lining-up with the narration as the real render does (once per narration; the result is kept and the render reuses it),
+        # otherwise the animation of a page that has never been rendered would come in at the wrong moments
+        _align_reveal(pid, job, 0.0, 0.08, only=set(ids))
+        pv = _need(pid)                          # (read from disk just now: a copy of its own to change)
+        pv.steps = slide_sequence.page_steps(pv.steps, ids)
+        for st in pv.steps:
+            if st.id in ids:
+                st.include = True                # chosen on purpose: play it even if it is left out of the video
+        intro, outro = "__intro__" in ids, "__outro__" in ids
+        size = video.preview_size(video.effective_config(pv))
+        out_dir = storage.preview_dir(pid)
+        out = out_dir / f"play_{uuid.uuid4().hex[:8]}.mp4"
+        res = video.render_project(pv, progress=lambda f, m: job.progress(0.08 + f * 0.92, m),
+                                   overrides={**size, "intro_enabled": intro, "outro_enabled": outro}, preview_out=out)
+        old = sorted((f for f in out_dir.glob("play_*.mp4") if f != out), key=lambda f: f.stat().st_mtime, reverse=True)
+        for f in old[PREVIEW_KEEP - 1:]:
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass                             # a player still has it open (Windows): the next preview removes it
+        return {"file": res["file"], "duration": res["duration"], "segments": res["segments"], "warning": res.get("warning", "")}
+    return _submit("playback", work, pid)
 
 
 @app.post("/api/projects/{pid}/render")
@@ -1374,6 +1489,7 @@ _KIND_DIR = {
     "audio": storage.audio_dir,
     "output": storage.output_dir,
     "media": clips.media_dir,          # videos of video steps (played in the editor preview)
+    "preview": storage.preview_dir,    # playback previews
 }
 
 

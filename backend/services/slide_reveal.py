@@ -20,6 +20,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageChops, ImageFilter
 
+from . import slide_timeline
+
 MAX_ITEMS = 12               # slides with more items than this aren't revealed one by one (too fragmented)
 APPEAR = 0.45                # time for one item to appear (seconds)
 DIM = 0.4                    # time for earlier items to dim
@@ -357,7 +359,7 @@ def export(src: Path, pages: Sequence[int], out_dir: Path, width: int,
             if progress:
                 progress((n - 1) / max(1, len(pages)), label(n, len(pages)))
             try:
-                meta = _export_page(pres.Slides(p), p, SW, SH, width, height, out_dir)
+                meta = _export_page(pres.Slides(p), p, SW, SH, width, height, out_dir, src)
             except Exception:
                 meta = None                       # this slide can't be analysed: it appears as a whole; other slides are unaffected
             if meta:
@@ -377,7 +379,14 @@ def export(src: Path, pages: Sequence[int], out_dir: Path, width: int,
     return result
 
 
-def _export_page(slide, page: int, SW: float, SH: float, W: int, H: int, out_dir: Path) -> Optional[Dict[str, Any]]:
+def _export_page(slide, page: int, SW: float, SH: float, W: int, H: int, out_dir: Path,
+                 src: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    try:
+        meta = slide_timeline.export_slide(slide, page, W, H, out_dir, src)       # the author's own animations first
+    except Exception:
+        meta = None                                                          # they couldn't be read: group by position instead
+    if meta:
+        return meta
     units, shapes = _units_of_slide(slide, SW, SH)
     _keep, items = group(units)
     if not items:
@@ -429,18 +438,49 @@ def _strip(text: str) -> Tuple[str, List[int]]:
     return "".join(out), idx
 
 
+_CLAUSE_END = re.compile(r"(?<!\d)[,，、:：]|[,，、:：](?!\d)")           # a comma or colon, but not inside a number ("1,000")
+CLAUSE_LONG = (110, 50)      # (Latin, Chinese / Japanese / Korean): a sentence longer than this many characters is also cut at its commas
+CLAUSE_MIN = (30, 14)        # ... into pieces of at least this many characters
+
+
+def _clauses(start: int, sent: str) -> List[Tuple[int, str]]:
+    """A long sentence (a list of things, say) cut at its commas into pieces of reasonable length, so that the AI can tell in which piece each item
+    is first talked about, not just in which sentence. Short sentences stay whole. Positions are in the original text."""
+    cjk = 1 if _CJK.search(sent) else 0
+    if len(sent) <= CLAUSE_LONG[cjk]:
+        return [(start, sent)]
+    cuts = [m.end() for m in _CLAUSE_END.finditer(sent) if m.end() < len(sent)]
+    spans: List[List[int]] = []
+    a = 0
+    for c in cuts:
+        if c - a >= CLAUSE_MIN[cjk]:
+            spans.append([a, c])
+            a = c
+    if spans and len(sent) - a < CLAUSE_MIN[cjk]:
+        spans[-1][1] = len(sent)                       # a short tail goes with the piece before it
+    else:
+        spans.append([a, len(sent)])
+    out = []
+    for a, b in spans:
+        seg = sent[a:b]
+        out.append((start + a + len(seg) - len(seg.lstrip()), seg.strip()))
+    return out
+
+
 def sentences(text: str) -> List[Tuple[int, str]]:
-    """Split the narration into sentences: [(start position in the original text, sentence)]."""
+    """Split the narration into the units the AI lines the slide up with: [(start position in the original text, text)]. Sentences, and the long
+    ones also cut at their commas."""
     out: List[Tuple[int, str]] = []
+
+    def add(start: int, seg: str) -> None:
+        if seg.strip():
+            out.extend(_clauses(start + len(seg) - len(seg.lstrip()), seg.strip()))
+
     start = 0
     for m in _SENT_RE.finditer(text):
-        seg = text[start:m.end()]
-        if seg.strip():
-            out.append((start + len(seg) - len(seg.lstrip()), seg.strip()))
+        add(start, text[start:m.end()])
         start = m.end()
-    seg = text[start:]
-    if seg.strip():
-        out.append((start + len(seg) - len(seg.lstrip()), seg.strip()))
+    add(start, text[start:])
     return out
 
 
@@ -605,7 +645,7 @@ def plan(texts: Sequence[str], centers: Sequence[Tuple[float, float]], narration
 
 ALIGN_SYSTEM = "你负责把幻灯片的讲解词和页面上的内容条目对应起来。只输出 JSON。"  # i18n: ignore
 ALIGN_TMPL = """下面每一页给出：  # i18n: ignore
-- items：页面上的内容条目，编号从 1 开始，按页面阅读顺序排列（"（图片）"表示没有文字的图片）
+- items：页面上的内容条目，编号从 1 开始，按页面阅读顺序排列（有动画的页按动画出现的先后；"（图片）"表示没有文字的图片）
 - sentences：这一页的讲解词，已经切成句子，编号从 1 开始
 讲解词和页面文字可能是不同的语言，也可能是意译，请按意思对应。
 对每一页，找出每个条目在讲解里「第一次被讲到」的句子编号；讲解里没讲到的条目（包括图片）填 0。
@@ -616,17 +656,20 @@ map 的长度必须和这一页 items 的个数一样。
 ALIGN_BATCH = 8
 
 
-def _reveal_texts(step) -> List[str]:
-    return [it.text for it in step.reveal.items] if step.reveal else []
+def reveal_texts(step) -> List[str]:
+    """What the narration is lined up with, in the order it appears: one text per item (items grouped by position),
+    or per step (slides with PowerPoint animations: the card, its text and its badge are one step)."""
+    return slide_timeline.unit_texts(step.reveal.items) if step.reveal else []
 
 
 def needs_align(step) -> bool:
     rv = step.reveal
-    if step.kind != "slide" or rv is None or not rv.enabled or len(rv.items) < 2 or not (step.narration or "").strip():
+    if step.kind != "slide" or rv is None or not rv.enabled or not (step.narration or "").strip():
         return False
-    if not any(t.strip() for t in _reveal_texts(step)):
+    texts = reveal_texts(step)
+    if len(texts) < 2 or not any(t.strip() for t in texts):
         return False
-    return rv.align_key != align_key(step.narration, _reveal_texts(step))
+    return rv.align_key != align_key(step.narration, texts)
 
 
 def align_steps(steps: Sequence[Any], client=None,
@@ -652,7 +695,7 @@ def align_steps(steps: Sequence[Any], client=None,
             sents[k] = ss
             pages.append({"page": k,
                           "items": [f"{i}. {(t.strip().replace(chr(13), ' ').replace(chr(10), ' ') or '（图片）')[:160]}"  # i18n: ignore
-                                    for i, t in enumerate(_reveal_texts(s), 1)],
+                                    for i, t in enumerate(reveal_texts(s), 1)],
                           "sentences": [f"{j}. {x[:300]}" for j, (_, x) in enumerate(ss, 1)]})
         data = client.chat_json([
             {"role": "system", "content": ALIGN_SYSTEM},
@@ -668,10 +711,10 @@ def align_steps(steps: Sequence[Any], client=None,
                 continue
             s = batch[k - 1]
             ss = sents[k]
-            if len(mp) != len(s.reveal.items):
+            if len(mp) != len(reveal_texts(s)):
                 continue
             offsets = [ss[j - 1][0] if 1 <= j <= len(ss) else -1 for j in mp]
-            result[s.id] = (offsets, align_key(s.narration, _reveal_texts(s)))
+            result[s.id] = (offsets, align_key(s.narration, reveal_texts(s)))
     if progress:
         progress(1.0, label(len(batches), len(batches)))
     return result
@@ -709,6 +752,8 @@ class RevealAnim:
         last = max((self.start[k] for k in self.animated), default=0.0)
         self.restore_at = (duration - RESTORE if focus and duration - RESTORE > last + APPEAR else None)
         self._alpha_cache: Dict[Tuple[int, int], Image.Image] = {}
+        self._dim_cache: Dict[Tuple[int, int], Image.Image] = {}
+        self._bg_cache: Dict[int, Tuple[int, int, int]] = {}
 
     def _alpha(self, k: int, a: float) -> Image.Image:
         key = (k, int(round(a * 100)))
@@ -720,6 +765,26 @@ class RevealAnim:
                 self._alpha_cache.clear()
             self._alpha_cache[key] = m
         return m
+
+    def _dimmed(self, k: int, vis: float) -> Image.Image:
+        """The item with its colours taken towards the slide's own colour under it (vis = 1: as it is; 0: that colour). Same shape, still opaque:
+        a see-through picture would let the picture lying behind it shine through (a photo in front of a large background drawing) and look as if the order was wrong."""
+        q = int(round(vis * 20))
+        key = (k, q)
+        im = self._dim_cache.get(key)
+        if im is None:
+            layer, x, y = self.layers[k]
+            bg = self._bg_cache.get(k)
+            if bg is None:
+                w, h = self.clean.size
+                x0, y0 = max(0, min(x, w - 1)), max(0, min(y, h - 1))
+                crop = self.clean.crop((x0, y0, max(x0 + 1, min(w, x + layer.width)), max(y0 + 1, min(h, y + layer.height))))
+                bg = self._bg_cache[k] = crop.resize((1, 1), Image.BOX).getpixel((0, 0))[:3]
+            im = Image.blend(Image.new("RGB", layer.size, bg), layer.convert("RGB"), q / 20)
+            if len(self._dim_cache) > 96:
+                self._dim_cache.clear()
+            self._dim_cache[key] = im
+        return im
 
     def key(self, t: float) -> Optional[Tuple[int, bool]]:
         """While the frame is static, return a state key (same key = identical frame, the previous one can be reused); None while animating."""
@@ -745,16 +810,17 @@ class RevealAnim:
         for k in shown:
             layer, x, y = self.layers[k]
             p = ease_out_cubic(min(1.0, (t - self.start[k]) / APPEAR))
-            a = p
+            pic = layer
             if self.focus and k != cur and self.times[k] < self.times[cur]:
                 dim = ease_out_cubic(min(1.0, (t - self.times[cur]) / DIM))   # dimming starts when the first item of the same beat appears
                 vis = 1 - (1 - FOCUS_ALPHA) * dim
                 if self.restore_at is not None and t >= self.restore_at:
                     r = ease_out_cubic(min(1.0, (t - self.restore_at) / RESTORE_FADE))
                     vis += (1 - vis) * r
-                a *= vis
+                if vis < 0.975:
+                    pic = self._dimmed(k, vis)
             dy = int(round(self.rise * (1 - p)))
-            img.paste(layer, (x, y + dy), self._alpha(k, a))
+            img.paste(pic, (x, y + dy), self._alpha(k, p))
         return img
 
 
@@ -763,6 +829,8 @@ def build_anim(rend, shots_dir: Path) -> Optional[RevealAnim]:
     sizes don't match, or nothing is worth revealing one by one."""
     st = rend.step
     rv = st.reveal
+    if rv is not None and rv.mode == "timeline":
+        return _build_timeline(rend, shots_dir)
     over = getattr(rend, "video_over", None)
     video_first = over is not None and rv is not None and len(over) == len(rv.items)
     if rv is None or len(rv.items) < (1 if video_first else 2):
@@ -831,3 +899,392 @@ def _video_first_times(over: Sequence[bool], texts: Sequence[str], centers: Sequ
     for k, t in zip(sub, sub_times):
         times[k] = max(t, 0.05)
     return times, focus and len(sub) >= 2
+
+
+# ---- slides with PowerPoint animations (see slide_timeline) ---------------------------------
+
+OFFSET_CAP = 1.5             # PowerPoint's delays inside one step are kept, but never longer than this (seconds)
+EXIT_CAP = 4.0               # how long after its step an element may stay before it goes out again
+EXIT_FADE = 0.35
+STEP_GAP = 0.5               # two steps are never closer than this: they come in the author's order, one after the other
+
+
+def parse_path(path: str) -> List[Tuple[float, float]]:
+    """The points of a PowerPoint motion path, coordinates as fractions of the slide; curves are sampled. PowerPoint writes absolute commands
+    ("M 0 0 L 0.47 0.62 E") and, for some of its built-in paths, relative ones ("M 0 0 l 0.036 0 l 0 0.036", "c ..."): lowercase = from the
+    current point. Z closes the shape (back to where it started), E ends the path."""
+    toks = re.findall(r"[MLCZEmlcze]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?", path or "")     # numbers may also be written "1." or ".5"
+    pts: List[Tuple[float, float]] = []
+    cur, start, cmd, i = (0.0, 0.0), None, "", 0
+    try:
+        while i < len(toks):
+            t = toks[i]
+            if t in "MLCZEmlcze":
+                i += 1
+                if t in "Ee":
+                    break
+                if t in "Zz":
+                    if start is not None and pts and pts[-1] != start:
+                        pts.append(start)
+                    cur = start or cur
+                    continue
+                cmd = t
+                continue
+            rel = cmd.islower()
+            if cmd in ("M", "m", "L", "l"):
+                x, y = float(toks[i]), float(toks[i + 1])
+                i += 2
+                cur = (cur[0] + x, cur[1] + y) if rel else (x, y)
+                pts.append(cur)
+                if cmd in ("M", "m"):
+                    start = cur
+                    cmd = "l" if rel else "L"                 # more pairs after a move are lines
+            elif cmd in ("C", "c"):
+                v = [float(toks[i + k]) for k in range(6)]
+                i += 6
+                x0, y0 = cur
+                if rel:
+                    v = [v[k] + (x0 if k % 2 == 0 else y0) for k in range(6)]
+                if not pts:
+                    pts.append(cur)
+                x1, y1, x2, y2, x3, y3 = v
+                for n in range(1, 13):
+                    u = n / 12
+                    c0, c1, c2, c3 = (1 - u) ** 3, 3 * u * (1 - u) ** 2, 3 * u * u * (1 - u), u ** 3
+                    pts.append((c0 * x0 + c1 * x1 + c2 * x2 + c3 * x3, c0 * y0 + c1 * y1 + c2 * y2 + c3 * y3))
+                cur = (x3, y3)
+            else:
+                i += 1                                    # a number without a command: skip it
+    except (ValueError, IndexError):
+        return []
+    return pts
+
+
+class Motion:
+    """A layer moving along a path (offsets in pixels from where it sits), as PowerPoint plays it: it speeds up for the first `accel` of the
+    time, slows down for the last `decel`, and stays where the path ends."""
+
+    def __init__(self, start: float, dur: float, points: List[Tuple[float, float]], accel: float = 0.0, decel: float = 0.0):
+        self.start, self.dur = start, max(dur, 0.01)
+        self.accel = max(0.0, min(accel, 0.9))
+        self.decel = max(0.0, min(decel, 0.9 - self.accel))
+        self.pts = points
+        self.cum = [0.0]
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            self.cum.append(self.cum[-1] + ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5)
+
+    @property
+    def end(self) -> float:
+        return self.start + self.dur
+
+    def _progress(self, u: float) -> float:
+        a, d = self.accel, self.decel
+        v = 1 / (1 - a / 2 - d / 2)
+        if a > 0 and u < a:
+            return v * u * u / (2 * a)
+        if d > 0 and u > 1 - d:
+            return 1 - v * (1 - u) ** 2 / (2 * d)
+        return v * (a / 2 + (u - a))
+
+    def offset(self, t: float) -> Tuple[int, int]:
+        if not self.pts or self.cum[-1] <= 0 or t <= self.start:
+            return 0, 0
+        s = self._progress(min(1.0, (t - self.start) / self.dur)) * self.cum[-1]
+        for k in range(1, len(self.pts)):
+            if s <= self.cum[k] or k == len(self.pts) - 1:
+                seg = self.cum[k] - self.cum[k - 1]
+                f = 0.0 if seg <= 0 else min(1.0, (s - self.cum[k - 1]) / seg)
+                (x0, y0), (x1, y1) = self.pts[k - 1], self.pts[k]
+                return int(round(x1 * f + x0 * (1 - f) - self.pts[0][0])), int(round(y1 * f + y0 * (1 - f) - self.pts[0][1]))
+        return 0, 0
+
+
+@dataclass
+class Look:
+    """How one layer comes in (and moves)."""
+    anim: str = "fade"                 # "appear" | "fade" | "wipe" | "fly"
+    dur: float = APPEAR                # how long coming in takes
+    side: str = ""                     # a wipe / fly starts from this side: top | right | bottom | left
+    motion: Optional[Motion] = None
+
+
+class TimelineAnim:
+    """Reveal animation of a slide with PowerPoint animations (positions already converted to frame coordinates).
+
+    The layers are drawn in PowerPoint's own z-order, back first, every time: a card that comes in later still lies behind the text that is
+    already there, and an element that is always there but lies above an animated one stays above it. Each layer has the time it comes in
+    (0 = there from the start), the way it comes in (appear / fade / wipe / fly), a motion path if the author gave it one, and, if it has an
+    exit, the time it goes out. The earlier steps are dimmed when the next one comes (focus) - by taking their colours towards the background,
+    never by making them see-through: a see-through card would let the card lying behind it shine through and look as if the order was wrong."""
+
+    def __init__(self, base: Image.Image, layers: List[Tuple[Image.Image, int, int]], starts: List[float], exits: List[Optional[float]],
+                 beats: List[int], looks: List[Look], media: List[bool], beat_times: Dict[int, float], duration: float,
+                 rise: float, focus: bool, under: Optional[List[Tuple[Image.Image, Tuple[int, int, int, int]]]] = None,
+                 talk_beats: Optional[Sequence[int]] = None, bounds: Optional[Tuple[int, int, int, int]] = None):
+        self.layers, self.starts, self.exits, self.beats = layers, starts, exits, beats
+        self.times = starts                              # the name RevealAnim uses
+        self.looks, self.media, self.beat_times = looks, media, beat_times
+        # only a step that has something to say takes the focus (earlier ones dim); a card or picture coming in behind the text doesn't
+        self.focus_times = {b: bt for b, bt in beat_times.items() if talk_beats is None or b in talk_beats}
+        self.under = under or []
+        self.duration, self.rise, self.focus = duration, rise, focus
+        self.bounds = bounds or (0, 0, base.width, base.height)
+        self.animated = [k for k, s in enumerate(starts) if s > 0]
+        self.moving = [k for k, lk in enumerate(looks) if lk.motion is not None]
+        last = max([starts[k] + self._dur(k) for k in self.animated] + [looks[k].motion.end for k in self.moving], default=0.0)
+        self.restore_at = duration - RESTORE if focus and duration - RESTORE > last else None
+        self._alpha_cache: Dict[Tuple[int, int], Image.Image] = {}
+        self._dim_cache: Dict[Tuple[int, int], Image.Image] = {}
+        self._bg_cache: Dict[int, Tuple[int, int, int]] = {}
+        # the lowest layers that never change are drawn once
+        self.floor, self.floor_n = base.copy(), 0
+        while self.floor_n < len(layers) and not self._varies(self.floor_n):
+            self._paste(self.floor, self.floor_n)
+            self.floor_n += 1
+        self._base = base
+        self._clean: Optional[Image.Image] = None
+
+    def _varies(self, k: int) -> bool:
+        return self.starts[k] > 0 or self.exits[k] is not None or self.looks[k].motion is not None
+
+    def _dur(self, k: int) -> float:
+        lk = self.looks[k]
+        return 0.0 if lk.anim == "appear" or lk.dur < 0.05 else lk.dur
+
+    def _paste(self, img: Image.Image, k: int, alpha: Optional[Image.Image] = None, dx: int = 0, dy: int = 0, poster: bool = False,
+               src: Optional[Image.Image] = None, box: Optional[Tuple[int, int, int, int]] = None) -> None:
+        if self.media[k] and self.under and not poster:
+            for frame, (x, y, _w, _h) in self.under:      # the video has played: its last frame lies where the video is
+                img.paste(frame, (x, y))
+            return
+        layer, x, y = self.layers[k]
+        pic = src if src is not None else layer
+        mask = alpha if alpha is not None else layer.getchannel("A")
+        if box is not None:                               # only this part of the layer is uncovered so far (wipe)
+            pic, mask, x, y = pic.crop(box), mask.crop(box), x + box[0], y + box[1]
+        img.paste(pic, (x + dx, y + dy), mask)
+
+    @property
+    def clean(self) -> Image.Image:
+        """The slide as it is when the video plays (video-first slides): only what is there from the start, the video's own picture in place."""
+        if self._clean is None:
+            img = self._base.copy()
+            for k in range(len(self.layers)):
+                if self.starts[k] <= 0:
+                    self._paste(img, k, poster=True)
+            self._clean = img
+        return self._clean
+
+    def _alpha(self, k: int, a: float) -> Image.Image:
+        key = (k, int(round(a * 100)))
+        m = self._alpha_cache.get(key)
+        if m is None:
+            base = self.layers[k][0].getchannel("A")
+            m = base if key[1] >= 100 else base.point(lambda v, a=key[1] / 100: int(v * a))
+            if len(self._alpha_cache) > 64:
+                self._alpha_cache.clear()
+            self._alpha_cache[key] = m
+        return m
+
+    def _dimmed(self, k: int, vis: float) -> Image.Image:
+        """The layer with its colours taken towards the background under it (vis = 1: as it is; 0: the background's colour). Same shape, still opaque."""
+        q = int(round(vis * 20))
+        key = (k, q)
+        im = self._dim_cache.get(key)
+        if im is None:
+            layer, x, y = self.layers[k]
+            bg = self._bg_cache.get(k)
+            if bg is None:
+                crop = self.floor.crop((max(0, x), max(0, y), max(1, x + layer.width), max(1, y + layer.height)))
+                bg = self._bg_cache[k] = crop.resize((1, 1), Image.BOX).getpixel((0, 0))[:3]
+            rgb = Image.blend(Image.new("RGB", layer.size, bg), layer.convert("RGB"), q / 20)
+            rgb.putalpha(layer.getchannel("A"))
+            if len(self._dim_cache) > 96:
+                self._dim_cache.clear()
+            im = self._dim_cache[key] = rgb
+        return im
+
+    def _current(self, t: float) -> int:
+        """The latest step the narration has reached (-1 = none yet)."""
+        return max((b for b, bt in self.focus_times.items() if bt <= t), default=-1)
+
+    def key(self, t: float) -> Optional[Tuple[int, int, int, bool, int]]:
+        """While the frame is static, return a state key (same key = identical frame, the previous one can be reused); None while animating."""
+        for k in self.animated:
+            if self.starts[k] <= t < self.starts[k] + self._dur(k):
+                return None
+        for k in self.moving:
+            if self.looks[k].motion.start <= t < self.looks[k].motion.end:
+                return None
+        for e in self.exits:
+            if e is not None and e <= t < e + EXIT_FADE:
+                return None
+        if self.focus and any(bt <= t < bt + DIM for bt in self.focus_times.values()):
+            return None
+        if self.restore_at is not None and self.restore_at <= t < self.restore_at + RESTORE_FADE:
+            return None
+        return (sum(1 for k in self.animated if t >= self.starts[k]), sum(1 for e in self.exits if e is not None and t >= e),
+                self._current(t), self.restore_at is not None and t >= self.restore_at,
+                sum(1 for k in self.moving if t >= self.looks[k].motion.end))
+
+    def _fly_from(self, k: int, side: str) -> Tuple[int, int]:
+        """Where a layer flying in starts: just outside the slide, on the given side or corner ("top-left" …); from the bottom when unknown."""
+        layer, x, y = self.layers[k]
+        bx0, by0, bx1, by1 = self.bounds
+        words = set((side or "").split("-"))
+        dx = bx0 - (x + layer.width) if "left" in words else bx1 - x if "right" in words else 0
+        dy = by0 - (y + layer.height) if "top" in words else by1 - y if "bottom" in words else 0
+        return (dx, dy) if dx or dy else (0, by1 - y)
+
+    def compose(self, t: float, final: bool = False) -> Image.Image:
+        from .renderer import ease_out_cubic
+        img = self.floor.copy()
+        if final:                                     # the editor's picture of the whole page: every element where it sits, like PowerPoint's edit view
+            for k in range(self.floor_n, len(self.layers)):
+                self._paste(img, k)
+            return img
+        cur = self._current(t)
+        for k in range(self.floor_n, len(self.layers)):
+            s, lk = self.starts[k], self.looks[k]
+            a, dx, dy, box = 1.0, 0, 0, None
+            if s > 0:
+                if t < s:
+                    continue
+                d = self._dur(k)
+                lin = 1.0 if d <= 0 else min(1.0, (t - s) / d)
+                p = ease_out_cubic(lin)
+                layer = self.layers[k][0]
+                if lk.anim == "fade":
+                    a, dy = p, int(round(self.rise * (1 - p)))
+                elif lk.anim == "wipe" and lin < 1.0:
+                    side = lk.side or "bottom"
+                    w, h = layer.size
+                    cw, ch = max(1, int(round(w * lin))), max(1, int(round(h * lin)))
+                    box = {"top": (0, 0, w, ch), "bottom": (0, h - ch, w, h), "left": (0, 0, cw, h), "right": (w - cw, 0, w, h)}.get(side, (0, h - ch, w, h))
+                elif lk.anim == "fly" and lin < 1.0:
+                    fx, fy = self._fly_from(k, lk.side)
+                    dx, dy = int(round(fx * (1 - p))), int(round(fy * (1 - p)))
+            e = self.exits[k]
+            if e is not None and t >= e:
+                a *= 1 - ease_out_cubic(min(1.0, (t - e) / EXIT_FADE))
+                if a <= 0:
+                    continue
+            src = None
+            if self.focus and s > 0 and 0 <= self.beats[k] < cur and not self.media[k]:
+                dim = ease_out_cubic(min(1.0, (t - self.focus_times[cur]) / DIM))
+                vis = 1 - (1 - FOCUS_ALPHA) * dim
+                if self.restore_at is not None and t >= self.restore_at:
+                    vis += (1 - vis) * ease_out_cubic(min(1.0, (t - self.restore_at) / RESTORE_FADE))
+                if vis < 0.975:
+                    src = self._dimmed(k, vis)
+            if lk.motion is not None:
+                mx, my = lk.motion.offset(t)
+                dx, dy = dx + mx, dy + my
+            self._paste(img, k, self._alpha(k, a) if a < 0.995 else None, dx, dy, src=src, box=box)
+        return img
+
+
+def _union_center(boxes: Sequence[Tuple[float, float, float, float]]) -> Tuple[float, float]:
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[0] + b[2] for b in boxes), max(b[1] + b[3] for b in boxes)
+    return (x0 + x1) / 2, (y0 + y1) / 2
+
+
+def _build_timeline(rend, shots_dir: Path) -> Optional[TimelineAnim]:
+    """The reveal animation of a slide whose layers follow the author's PowerPoint animations: each step (one click) is lined up with
+    the narration like one item, and inside a step PowerPoint's own offsets are kept. None = show the slide as a whole."""
+    st = rend.step
+    rv = st.reveal
+    video_first = getattr(rend, "video_over", None) is not None
+    clean_path = shots_dir / rv.clean
+    if not rv.items or not clean_path.exists():
+        return None
+    with Image.open(clean_path) as im:
+        clean = im.convert("RGB")
+    if rend.shot is None or clean.size != rend.shot.size:
+        return None
+    x0, y0, x1, _y1 = rend.draw_box
+    f = (x1 - x0) / clean.size[0]
+    layers, boxes = [], []
+    for it in rv.items:
+        p = shots_dir / it.file
+        if not p.exists():
+            return None
+        with Image.open(p) as im:
+            lay = im.convert("RGBA")
+        boxes.append((float(it.x), float(it.y), float(lay.width), float(lay.height)))
+        w, h = max(1, int(round(lay.width * f))), max(1, int(round(lay.height * f)))
+        lay = lay.convert("RGBa").resize((w, h), Image.LANCZOS).convert("RGBA")       # premultiplied: no dark edges from the transparent pixels
+        layers.append((lay, x0 + int(round(it.x * f)), y0 + int(round(it.y * f))))
+    # what is revealed with the narration: everything, or (video first) only what the author let come in after the video; the rest is there from the start
+    def revealed(it) -> bool:
+        return it.beat >= 0 and (it.after_media or not video_first)
+
+    all_beats = sorted({it.beat for it in rv.items if it.beat >= 0})
+    sel = sorted({it.beat for it in rv.items if revealed(it)})
+    if not sel:
+        return None
+    narration = st.narration or st.caption or ""
+    audio_dur = st.audio_duration if st.audio else 0.0
+    lead = float(getattr(rend, "speech_offset", 0.0) or 0.0)
+    total = rend.duration - lead
+    all_texts = slide_timeline.unit_texts(rv.items)
+    align = rv.align if rv.align and len(rv.align) == len(all_beats) and rv.align_key == align_key(narration, all_texts) else None
+    texts = slide_timeline.unit_texts(rv.items, only_after_media=video_first)
+    centers = [_union_center([boxes[k] for k, it in enumerate(rv.items) if it.beat == b and revealed(it)]) for b in sel]
+    sub_align = [align[all_beats.index(b)] for b in sel] if align is not None else None
+    # the steps with text are lined up with the narration; a step without text (a card behind the text, a picture) has nothing to be found in it,
+    # so it comes in its place in the author's order: between the steps around it, not together with the nearest one
+    talk = [i for i, t in enumerate(texts) if t.strip()]
+    planned = None
+    if rend.theme.slide_reveal and rv.enabled:
+        if talk:
+            planned = plan([texts[i] for i in talk], [centers[i] for i in talk], narration, st.boundaries, audio_dur, total,
+                           [sub_align[i] for i in talk] if sub_align is not None else None)
+        elif narration.strip() and audio_dur > 0:
+            planned = (_fill([None] * len(sel), total), False)
+    if planned is None:
+        if not video_first:
+            return None
+        planned = ([FIRST_AT + r * CASCADE for r in range(len(sel))], False)
+    times, focus = planned
+    if talk and len(talk) < len(sel):
+        found = dict(zip(talk, times))
+        times = _between([found.get(i) for i in range(len(sel))])
+    # the steps come in the order the author clicked them, whatever order the narration happens to talk about them in
+    times = list(times)
+    for i in range(1, len(times)):
+        times[i] = max(times[i], times[i - 1] + STEP_GAP)
+    latest = max(FIRST_AT + 0.5, total - 0.4)
+    times = [min(t, latest) for t in times]
+    beat_times = {b: lead + t for b, t in zip(sel, times)}
+    sw, sh = x1 - x0, _y1 - y0
+    starts, exits, beats, looks, media, kept = [], [], [], [], [], []
+    for k, it in enumerate(rv.items):
+        if video_first and not revealed(it) and it.exit_beat >= 0 and it.exit_beat not in beat_times:
+            continue                                      # it has already gone out again by the time the video has played
+        bt = beat_times.get(it.beat) if revealed(it) else None
+        starts.append(bt + min(max(0.0, it.offset), OFFSET_CAP) if bt is not None else 0.0)
+        et = beat_times.get(it.exit_beat)
+        exits.append(et + min(max(0.0, it.exit_offset), EXIT_CAP) if et is not None else None)
+        beats.append(it.beat if bt is not None else -1)
+        motion = None
+        mt = beat_times.get(it.motion_beat)
+        if mt is not None and it.motion_path:
+            pts = [(px * sw, py * sh) for px, py in parse_path(it.motion_path)]
+            if len(pts) >= 2:
+                motion = Motion(mt + min(max(0.0, it.motion_offset), OFFSET_CAP), it.motion_dur, pts, it.motion_accel, it.motion_decel)
+        looks.append(Look(it.anim, min(max(it.dur, 0.0), 2.0), it.side, motion))
+        media.append(it.media)
+        kept.append(k)
+    layers = [layers[k] for k in kept]
+    saved = rend.shot
+    rend.shot = clean
+    try:
+        clean_stage = rend._build_stage()
+    finally:
+        rend.shot = saved
+    return TimelineAnim(clean_stage, layers, starts, exits, beats, looks, media, beat_times, rend.duration,
+                        rise=14 * rend.H / 1080, focus=focus and len(sel) >= 2,
+                        under=getattr(rend, "video_under", None) if video_first else None,
+                        talk_beats=[sel[i] for i in talk], bounds=(x0, y0, x1, _y1))

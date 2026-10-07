@@ -55,6 +55,11 @@ def work_dir(pid: str) -> Path:
     return project_dir(pid) / "work"
 
 
+def preview_dir(pid: str) -> Path:
+    """Playback previews (a few pages rendered for watching in the editor); only the newest few are kept."""
+    return project_dir(pid) / "preview"
+
+
 def _json_path(pid: str) -> Path:
     return project_dir(pid) / "project.json"
 
@@ -81,9 +86,13 @@ def create(name: str = "", language: str = "") -> Project:
     return proj
 
 
+# voice-over still being made: synth's .part files, a paragraph waiting to replace the real one, Q&A lines, a paid service's chunks
+_HALF_MADE_AUDIO = (".part.", ".new.", ".lines_", ".cloud_")
+
+
 def cleanup_temp(max_age_hours: float = 24) -> int:
     """Clean up temporary files at start-up: work/render_* left by renders that were interrupted (the process just started, so no render can be running),
-    and uploads in _tmp older than a day. Returns how many were deleted."""
+    half-made voice-over files of a synthesis that was cut off, and uploads in _tmp older than a day. Returns how many were deleted."""
     import shutil
     n = 0
     now = time.time()
@@ -99,10 +108,17 @@ def cleanup_temp(max_age_hours: float = 24) -> int:
                         else:
                             f.unlink(missing_ok=True)
                         n += 1
-            elif valid_pid(d.name) and (d / "work").is_dir():
-                for r in (d / "work").glob("render_*"):
+            elif valid_pid(d.name):
+                for r in (d / "work").glob("render_*") if (d / "work").is_dir() else []:
                     if r.is_dir():
                         shutil.rmtree(r, ignore_errors=True)
+                        n += 1
+                for f in (d / "audio").iterdir() if (d / "audio").is_dir() else []:
+                    if any(m in f.name for m in _HALF_MADE_AUDIO):
+                        if f.is_dir():
+                            shutil.rmtree(f, ignore_errors=True)
+                        else:
+                            f.unlink(missing_ok=True)
                         n += 1
         except Exception:
             pass
@@ -236,6 +252,39 @@ def list_projects() -> List[dict]:
         })
     out.sort(key=lambda x: x["updated_at"], reverse=True)
     return out
+
+
+class UploadTooLarge(Exception):
+    """An upload is bigger than allowed (the API answers 413)."""
+
+    def __init__(self, max_bytes: int):
+        self.max_bytes = max_bytes
+        super().__init__(i18n.t("文件太大（最多 {size}）", size=size_label(max_bytes)))
+
+
+def size_label(n: int) -> str:
+    gb = 1024 ** 3
+    return f"{n // gb} GB" if n >= gb and n % gb == 0 else f"{max(1, round(n / 1024 ** 2))} MB"
+
+
+def copy_limited(src, dst: Path, max_bytes: int, chunk: int = 1024 * 1024) -> int:
+    """Copy a file object to dst, giving up as soon as more than max_bytes arrive: the partial file is removed,
+    so a huge upload can never fill the disk. Returns the number of bytes written."""
+    total = 0
+    try:
+        with open(dst, "wb") as f:
+            while True:
+                buf = src.read(chunk)
+                if not buf:
+                    break
+                total += len(buf)
+                if total > max_bytes:
+                    raise UploadTooLarge(max_bytes)
+                f.write(buf)
+    except BaseException:
+        dst.unlink(missing_ok=True)
+        raise
+    return total
 
 
 def delete(pid: str) -> bool:

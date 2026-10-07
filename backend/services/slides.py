@@ -30,6 +30,7 @@ from . import clips, slide_reveal
 Progress = Optional[Callable[[float, str], None]]
 
 MAX_PAGES = 100
+MAX_BYTES = 2 * 1024 ** 3        # largest deck accepted (decks with embedded videos can be big)
 RENDER_WIDTH = 1920
 THUMB_WIDTH = 360
 
@@ -415,7 +416,10 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
             step.reveal = _attach_reveal(proj, step, reveal[s["i"]], src_dir / "reveal")
             # the cover appears as a whole by default: its big title is often in the middle of the page, not in the title area, and would be split into several items. The data is still generated;
             # to reveal it one by one, switch it on for this slide in the editor
-            step.reveal.enabled = not _is_cover(s, man)
+            # (slides with the author's own animations are revealed as animated, cover or not)
+            step.reveal.enabled = step.reveal.mode == "timeline" or not _is_cover(s, man)
+            if req.videos and s.get("videos") and any(it.after_media for it in step.reveal.items):
+                step.sequence = "video_first"        # the author made the text come in after the video has played
         step.index = len(proj.steps)
         proj.steps.append(step)
         if req.videos:
@@ -486,8 +490,10 @@ def _attach_reveal(proj: Project, step: Step, meta: Dict[str, Any], src: Path) -
     for k, it in enumerate(meta["items"], 1):
         name = f"{step.id}_r{k:02d}.png"
         shutil.copyfile(src / it["file"], shots / name)
-        items.append(RevealItem(file=name, x=int(it["x"]), y=int(it["y"]), text=it.get("text", "")))
-    return SlideReveal(clean=clean, items=items)
+        timing = {f: it[f] for f in ("beat", "offset", "anim", "exit_beat", "exit_offset", "after_media", "media", "dur", "side",
+                                      "motion_beat", "motion_offset", "motion_dur", "motion_path", "motion_accel", "motion_decel") if f in it}
+        items.append(RevealItem(file=name, x=int(it["x"]), y=int(it["y"]), text=it.get("text", ""), **timing))
+    return SlideReveal(clean=clean, items=items, mode=meta.get("mode", ""))
 
 
 def _video_step(proj: Project, s: Dict[str, Any], v: Dict[str, Any], src_dir: Path) -> Step:

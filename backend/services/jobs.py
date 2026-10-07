@@ -5,6 +5,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from .. import i18n
@@ -13,7 +14,9 @@ from ..i18n import N_
 _jobs: Dict[str, Dict[str, Any]] = {}
 _objects: Dict[str, "Job"] = {}          # running job objects (used to send the stop signal)
 _lock = threading.RLock()
+_closing: set = set()                    # projects being deleted: they take no new jobs
 MAX_KEEP = 60
+STOP_WAIT = 20.0                         # seconds to wait for a project's jobs to stop before it is deleted
 
 # These jobs rewrite the same project as a whole; only one may run per project at a time
 HEAVY = {"script", "translate", "tts", "render", "auto", "magic_mic", "subtitles2"}
@@ -24,6 +27,7 @@ KIND_NAME = {
     "card_bg": N_("处理片头片尾背景"),
     "video": N_("处理视频"),
     "subtitles2": N_("第二语言字幕"),
+    "playback": N_("生成回放"),
 }
 
 
@@ -32,6 +36,16 @@ class JobConflict(RuntimeError):
         self.job = job
         kind = KIND_NAME.get(job["kind"])
         super().__init__(i18n.t("这个项目正在{task}，请等它完成后再试", task=i18n.t(kind) if kind else job["kind"]))
+
+
+class ProjectClosing(RuntimeError):
+    def __init__(self):
+        super().__init__(i18n.t("这个项目正在删除，请稍后再试"))
+
+
+class ProjectGone(RuntimeError):
+    def __init__(self):
+        super().__init__(i18n.t("项目不存在"))
 
 
 class JobCancelled(BaseException):
@@ -108,13 +122,21 @@ def _gc() -> None:
 
 
 def submit(kind: str, fn: Callable[[Job], Any], project_id: str = "",
-           exclusive: Optional[Iterable[str]] = None) -> Dict[str, Any]:
+           exclusive: Optional[Iterable[str]] = None, exists: Optional[Callable[[str], bool]] = None) -> Dict[str, Any]:
     """Start a job. fn receives the Job object; its return value goes into result.
+
+    exists: tells whether the project is still there. Checked under the same lock as the "being deleted" mark, so there is no moment at which a
+    request that looked at the project earlier (an upload that was still arriving) can start a job on a project that is gone: before the deletion
+    ends the mark refuses it, afterwards the project is missing. (Such a job would create folders for a project that no longer exists.)
 
     exclusive: job kinds that conflict within the same project. A job of the same kind already running -> return that job (guards against double clicks);
     another conflicting job running -> raise JobConflict.
     """
     with _lock:
+        if project_id and project_id in _closing:
+            raise ProjectClosing()
+        if project_id and exists is not None and not exists(project_id):
+            raise ProjectGone()
         if project_id and exclusive:
             group = set(exclusive)
             for j in _jobs.values():
@@ -176,6 +198,36 @@ def cancel(job_id: str) -> Optional[Dict[str, Any]]:
             data["cancel_requested"] = True
             data["message"] = i18n.t("正在停止…")
         return _snapshot(data)
+
+
+@contextmanager
+def closing(project_id: str):
+    """While a project is being deleted it takes no new jobs."""
+    with _lock:
+        _closing.add(project_id)
+    try:
+        yield
+    finally:
+        with _lock:
+            _closing.discard(project_id)
+
+
+def stop_project(project_id: str, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Stop every job of a project and wait for them to end (a render still running would write into the folder after it is deleted).
+    Returns the jobs that are still running when the time is up."""
+    deadline = time.time() + (STOP_WAIT if timeout is None else timeout)
+    while True:
+        with _lock:
+            left = [d for d in _jobs.values() if d["project_id"] == project_id and d["status"] in ("pending", "running")]
+            for d in left:
+                job = _objects.get(d["id"])
+                if job is not None and not job.cancel_event.is_set():
+                    job.cancel_event.set()
+                    d["cancel_requested"] = True
+                    d["message"] = i18n.t("正在停止…")
+            if not left or time.time() >= deadline:
+                return [_snapshot(d) for d in left]
+        time.sleep(0.1)
 
 
 def get(job_id: str) -> Optional[Dict[str, Any]]:

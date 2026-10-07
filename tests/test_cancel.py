@@ -23,7 +23,8 @@ import selftest  # noqa: E402
 from backend import config as _cfg  # noqa: E402
 # don't read your real config.json (its default voice may not be Chinese and couldn't read the Chinese narration in this test)
 _cfg.CONFIG_PATH = DATA / 'config.json'
-_cfg.CONFIG_PATH.write_text('{"ui_language": "zh", "language": "zh-CN", "voice": "zh-CN-XiaoxiaoNeural"}', encoding='utf-8')
+# tts_workers = 1: this test stops in the middle of a one-by-one voice-over (several at once is covered by test_tts_parallel)
+_cfg.CONFIG_PATH.write_text('{"ui_language": "zh", "language": "zh-CN", "voice": "zh-CN-XiaoxiaoNeural", "tts_workers": 1}', encoding='utf-8')
 _cfg._cache = None
 
 c = TestClient(main.app, base_url="http://127.0.0.1:8756", headers={"Origin": "http://127.0.0.1:8756"})
@@ -114,11 +115,18 @@ llm_openai.requests.post = must_not_call
 calls.clear()
 
 pid = selftest.build_project("停止测试-配音")          # comes with a title and narration for every step
-real_synth = tts.synth
+TONE = subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i", "sine=f=440:sample_rate=24000", "-t", "1.0",
+                       "-f", "mp3", "pipe:1"], capture_output=True, check=True).stdout
+
+
+def real_synth(text, voice, out_path, rate="", volume="", pitch=""):
+    """Offline stand-in for the voice service (a one-second tone), so the timing below doesn't depend on the network."""
+    out_path.write_bytes(TONE)
+    return 1.0, []
 
 
 def slow_synth(*a, **k):
-    time.sleep(0.8)
+    time.sleep(0.8)                      # a synthesis call in flight when Stop is pressed: it has to finish first
     return real_synth(*a, **k)
 tts.synth = slow_synth
 j = c.post(f"/api/projects/{pid}/auto", json={}).json()

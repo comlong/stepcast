@@ -36,7 +36,16 @@ keep = work / "preview_card_intro.jpg"; keep.write_bytes(b"jpg")
 tmp = config.DATA_DIR / "_tmp"; tmp.mkdir(exist_ok=True)
 old = tmp / "old_upload.webm"; old.write_bytes(b"x"); os.utime(old, (time.time() - 3 * 86400,) * 2)
 new = tmp / "new_upload.webm"; new.write_bytes(b"x")
+aud = storage.audio_dir(p.id); aud.mkdir(parents=True, exist_ok=True)
+real_audio = [aud / "s_1.mp3", aud / "s_2_own.mp3", aud / "__intro__.mp3", aud / "__intro__.txt"]
+half = [aud / "s_1.ab12cd.part.mp3", aud / "s_1.ab12cd.new.mp3", aud / "s_2_own.ab12cd.part.mp3"]
+for f in real_audio + half:
+    f.write_bytes(b"x")
+lines_dir = aud / "s_3.ab12cd.new.lines_ef34ab"; lines_dir.mkdir(); (lines_dir / "000.mp3").write_bytes(b"x")
+cloud_dir = aud / "__intro__.cloud_ab12cd"; cloud_dir.mkdir(); (cloud_dir / "000.bin").write_bytes(b"x")
 n = storage.cleanup_temp()
+check("合成到一半被打断留下的音频临时文件被删", not any(f.exists() for f in half) and not lines_dir.exists() and not cloud_dir.exists())
+check("真正的配音文件一个不动", all(f.exists() for f in real_audio))
 check("渲染中断留下的目录被删", not stale.exists())
 check("其他工作文件不动", keep.exists())
 check("超过一天的临时上传被删、新的保留", not old.exists() and new.exists(), f"删了 {n} 个")

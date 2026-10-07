@@ -47,7 +47,7 @@ DEFAULTS: Dict[str, Any] = {
     # LLM: llm_provider picks the provider, llm_providers[provider] = {api_key, base_url, model}
     "llm_provider": "deepseek",
     "llm_providers": {},
-    # paid voice services: tts_services[doubao | minimax | qwen] = {api_key, voices (your own voice IDs), model}
+    # paid voice services: tts_services[doubao | minimax | qwen | gemini | elevenlabs | azure] = {api_key, voices (your own voice IDs), model, region, …}
     "tts_services": {},
     # fields from old versions that only supported DeepSeek; still valid
     "deepseek_api_key": "",
@@ -58,6 +58,7 @@ DEFAULTS: Dict[str, Any] = {
     "voice": "en-US-AriaNeural",
     "tts_rate": "+0%",
     "tts_volume": "+0%",
+    "tts_workers": 0,             # paragraphs voiced at once; 0 = automatic (3 for the free Edge voices, 2 for paid services, which limit parallel requests)
     "video_width": 1920,
     "video_height": 1080,
     "video_fps": 30,

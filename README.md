@@ -17,7 +17,7 @@ Your data stays on your machine. Speech recognition runs locally. Only writing n
 | Capture browser actions | The Chrome extension records clicks, typing, Enter and page navigation, and takes a screenshot at every step |
 | Understand the target | Records the clicked element's text, role (button / link / text box) and position |
 | Write the narration | An AI model writes the video title, intro, and per-step narration and subtitles from the recorded actions |
-| Voice-over | Neural voices from edge-tts (free), or paid voices from Doubao, MiniMax or Qwen-TTS |
+| Voice-over | Neural voices from edge-tts (free), or paid voices from Doubao, MiniMax, Qwen-TTS, Google Gemini, ElevenLabs or Azure Speech |
 | Voice input | **Narrate while recording** (your speech is split across the steps automatically), record your own voice per step, upload audio, dictate text |
 | PPT / PDF to video | One step per slide; **points appear as the narration reaches them**; **videos embedded in slides play in place**; **speaker notes used word for word as narration** (or rewritten by AI); pick slides and level of detail |
 | Two-person Q&A | Turn a deck into a **conversation between a host and an expert**: two voices, full content, sounds like two colleagues talking |
@@ -138,11 +138,16 @@ Edge voices are free and the default. For more natural voices, add a key under *
 | **Doubao Speech (Volcengine)** | The most natural Chinese voices; your own cloned voices (IDs starting with `S_`) can be added | Enable "Speech Synthesis Model 2.0" in the Doubao Speech console and create a key under "API Key management" |
 | **MiniMax Speech** | Very natural in Chinese and English, many voices (the full list, including your clones, is fetched with your key) | Same key as MiniMax under AI models |
 | **Qwen-TTS (Alibaba Cloud Model Studio)** | One voice speaks ten languages including Chinese and English | Same key as Qwen under AI models |
+| **Google Gemini Speech** | One voice speaks over a hundred languages, 30 voices; describe the tone in words (**Tone hint**); two models (Flash TTS, or the cheaper Flash-Lite TTS) | Same key as Google Gemini under AI models. In Europe it needs a paid tier: link a billing account in Google AI Studio |
+| **ElevenLabs** | Widely regarded as the most natural and expressive voices, a huge voice library, especially good for English and European languages; models Multilingual v2 / v3 / Flash v2.5 | Create a key on the website's API Keys page; the free tier has 10,000 characters per month |
+| **Microsoft Azure Speech** | The same voices as the free Edge voices, plus more natural HD voices; European regions and a monthly free allowance | Create a "Speech" resource in the Azure portal, copy its key and enter the resource's region (e.g. `westeurope`) in the settings |
 
 - **Test** synthesises one sentence to check the key (costs a tiny amount)
 - Long paragraphs are synthesised sentence by sentence and joined; the timings align subtitles and slide reveals
 - Errors (wrong key, no balance) are reported instead of silently falling back to a robotic Windows voice
-- Environment variables `MODEL_SPEECH_API_KEY` (Doubao), `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY` also work
+- Environment variables `MODEL_SPEECH_API_KEY` (Doubao), `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `ELEVENLABS_API_KEY` (or `XI_API_KEY`), `AZURE_SPEECH_KEY` also work
+- None of these services returns word-level timing, so subtitles and slide reveals inside a long paragraph are timed per chunk (a few sentences), not per word
+- **Keeping voice-over text in Europe:** choose an Azure region such as `westeurope`, or ElevenLabs with **Data region → EU** (needs an Enterprise plan). Gemini has no region setting
 
 > No key at all? Write the narration yourself in the editor — voice-over and rendering work the same.
 
@@ -170,6 +175,7 @@ Stopping opens the editor automatically.
 - **Middle:** drag the orange box to adjust the highlight; switch to **Rendered preview** to see the actual video frame
 - **Right column:** edit the on-screen title, narration and subtitle; **AI rewrite** rewrites the current text as you ask; **Note for the AI** is taken into account when writing narration
 - Untick **Include in video** to skip a mistaken step
+- **Watch pages before rendering the whole video:** **▶ Play this page** (above the preview, or the small ▶ on each card) renders just that page the way the final video shows it — animation, voice-over, subtitles, and the videos on it — as a small 720p video and plays it. It works for every page, including pages whose videos the browser itself can't play (wmv, avi, some mov / mkv). **▶ Play in a row** (top of the left column) lets you tick several pages (shift-click for a range, **Select all**, **From this page**) and watch them one after another; the page being played is highlighted in the list. **■ Stop playing** (or Esc) stops the player and cancels a preview that is still being made. Previews never touch the real video or its subtitle files; only the newest three are kept in the project's `preview` folder
 
 **3. Generate.** The bottom bar, left to right:
 
@@ -243,7 +249,7 @@ In the right column's **Voice-over** card: **🎙 Record my voice** (pick microp
 
 **Changing your mind later:** in a slide project, **① Write narration** offers the same choices. With "use the notes", **Overwrite narration I've edited by hand** is ticked by default, because the notes are your reference script; after editing a slide's **Speaker notes** in the editor, writing the narration again uses the new notes. The choice is stored with the project and reused by **⚡ Generate all**.
 
-Each slide becomes a static step: centred page, slide transitions, subtitles below the page so they never cover content. PowerPoint animations and transitions are not kept.
+Each slide becomes a step: centred page, a page-turn fade in the video, subtitles below the page so they never cover content. PowerPoint's own slide transitions are not kept; the animations inside a slide are followed when PowerPoint is installed (see [Slides with PowerPoint animations](#slides-with-powerpoint-animations)).
 
 ### Videos inside slides
 
@@ -266,12 +272,24 @@ With **Reveal points one by one, highlight the current one** (default when impor
 
 How the timing is decided:
 
-- **With an AI model configured:** before rendering, the AI matches each point to the narration sentence that talks about it (by meaning — works even if the narration is in another language or paraphrased); points appear at the start of that sentence. Points the narration doesn't mention appear in order between their neighbours; if nothing matches, the points appear quickly one after another after the slide change. Results are cached, so unchanged slides aren't sent again
+- **With an AI model configured:** before rendering — and before **▶ Play this page**, so a page you have not rendered yet shows the same timing — the AI matches each point to the part of the narration that talks about it (by meaning — works even if the narration is in another language or paraphrased); points appear at the start of that part. Long sentences are cut at their commas for this, so a list ("a pen, a ruler, an eraser …") is matched item by item, not all at the start of the sentence. Points the narration doesn't mention appear in order between their neighbours; if nothing matches, the points appear quickly one after another after the slide change. Results are cached, so unchanged slides aren't sent again
 - **Without AI:** the slide text is searched in the narration; if fewer than half of the points are found, they appear quickly one after another without highlighting
 - Images without text appear together with the nearest text point
 - When the AI writes the narration, it gets each slide's points in reading order, so it talks about them in the order they appear
 
 Card layouts count each card as one point (arrows go with the following card); classic bullet lists count each top-level bullet with its sub-bullets; reading order is row by row, then column by column. Slides with a single point, more than 12 points or redactions — and the cover — appear as a whole. Switch it per project or per slide (**Reveal points on this slide**) under **Slide content** in the editor.
+
+#### Slides with PowerPoint animations
+
+If the author animated a slide in PowerPoint, StepCast follows **those animations** instead of guessing from the layout:
+
+- **Steps = clicks.** Each click of the animation is one step, lined up with the narration like a point above. Inside a step PowerPoint's own timing is kept: effects set to "with previous" appear together, "after previous" and delays keep their offsets (an element can come in half a second after its card, or leave again 2 seconds later)
+- **Text and its background.** What has no entrance animation (a card behind the text, the title, the page background) is simply there from the start. Every animated shape — or, for a build by paragraph, every paragraph — becomes its own transparent layer, and all layers are drawn in PowerPoint's own **stacking order**: a card that comes in after its text still lies behind it, and a static label above an animated card stays above it. Each layer is exported over black and over white, so text edges are exact and can sit on any background
+- **Entrance and exit.** "Appear" is instant (so is any effect too short to see). "Wipe" uncovers the element from the side PowerPoint set, "Fly in" slides it in from that edge or corner, the other entrances fade in and float up slightly; exit effects make the element leave at the time PowerPoint set
+- **Motion paths.** A light spot that appears and then slides along a line for two seconds does exactly that, with PowerPoint's own duration and ease-in / ease-out. Lines, curves and closed shapes all work, including PowerPoint's built-in paths. Emphasis effects (spin, pulse, colour change) are ignored
+- **Click order is kept.** Steps always appear in the order the author clicked them, whatever order the narration mentions them in (at least half a second apart); the narration prompt also asks the AI to follow the animation order. While a later step is being talked about, the earlier content is dimmed toward the page background and stays opaque, so cards behind it never show through
+- **Video followed by callouts.** When the author lets callouts come in after the video has played (after the "play" effect in the animation list), the slide is imported as **video first**: the video plays, then the callouts come in over its last frame as the narration reaches them, and the AI writes narration only for those steps
+- A slide without entrance animations, or with more than 40 layers, falls back to the layout-based grouping above. Covers with animations are revealed too
 
 This needs **PowerPoint** on the importing computer (it exports extra images per point; importing takes about a second longer per slide). Rendering doesn't need PowerPoint, so projects keep the effect on other computers. Without PowerPoint, or for PDFs, slides appear as a whole.
 
@@ -352,7 +370,7 @@ On non-Windows systems StepCast falls back to `arabic-reshaper` + `python-bidi`:
 
 ## Rendering speed
 
-Frames are drawn with Pillow in Python, then encoded by ffmpeg. Drawing is the bottleneck, so three things are combined (all on by default):
+Frames are drawn with Pillow in Python, then fed to ffmpeg for encoding. For recorded websites drawing is the bottleneck. Slide projects mostly reuse frames, so drawing is cheap there and the time goes into feeding frames to ffmpeg and encoding them (that is where the GPU helps most). Three things are combined (all on by default):
 
 | Technique | Details |
 |---|---|
@@ -367,7 +385,11 @@ Measured on an 8-core desktop, 1920×1080 @ 30 fps:
 | PPT slides (9 slides, 2 min 36 s video) | 164 s | 22 s | 7.6× |
 | Recorded website (8 steps, 68 s video) | 59 s | 30 s | 2.0× |
 
+On a 4-core / 8-thread i7-4790K with a GTX 1650 SUPER, 8 animated slides (3 min 33 s of video) take 36 s with GPU encoding (about 6× real time) and 50 s on the CPU alone.
+
 Parallel and serial output are pixel-identical. To control it manually, set `"video_encoder"` (`auto` / `cpu` / `nvenc` / `qsv` / `amf`) and `"render_workers"` (`0` = automatic) in `config.json`. GPU-encoded files are usually 30–50% larger; use `cpu` for smaller files. Lower resolution or frame rate (⚙ Settings → Video style) for more speed: 720p is more than twice as fast as 1080p.
+
+**Voice-over** for a whole project is made a few paragraphs at a time: 3 at once for the free Edge voices, 2 for the paid services (they limit parallel requests by plan). In a test with 12 paragraphs this took 3.9 s instead of 18.8 s. Set `"tts_workers"` in `config.json` to change it (`0` = automatic, `1` = one by one). Pressing Stop keeps the paragraphs already finished (and those in progress, once they are done) and starts no new ones; a paragraph's audio and its timing always change together, so a stopped re-voicing never leaves new audio next to old subtitle times. Q&A projects already voice the lines of each step in parallel, so their steps go one by one.
 
 ## Video style
 
@@ -393,7 +415,7 @@ Parallel and serial output are pixel-identical. To control it manually, set `"vi
 
 ## Privacy
 
-Screenshots, audio, videos and scripts stay in the local `projects/` folder. Text is sent to the AI provider you chose (nothing leaves your computer with local Ollama) only for: **writing narration / translating / AI rewrite**; **generating second-language subtitles** (the main subtitle text); and **rendering slides with "reveal one by one"** (each slide's narration and point texts, so the AI can tell which point is being discussed — without AI, text matching is used offline). Every provider receives exactly the same content. Voice-over text goes to the voice service you chose (Edge by default; Doubao / MiniMax / Qwen if you use their voices).
+Screenshots, audio, videos and scripts stay in the local `projects/` folder. Text is sent to the AI provider you chose (nothing leaves your computer with local Ollama) only for: **writing narration / translating / AI rewrite**; **generating second-language subtitles** (the main subtitle text); and **rendering or playing back slides with "reveal one by one"** (each slide's narration and point texts, so the AI can tell which point is being discussed — without AI, text matching is used offline). Every provider receives exactly the same content. Voice-over text goes to the voice service you chose (Edge by default; Doubao / MiniMax / Qwen / Gemini / ElevenLabs / Azure if you use their voices).
 
 **See exactly what would be sent** (intercepted, nothing is sent, no key needed):
 
@@ -418,7 +440,7 @@ app.py                  entry point
 backend/main.py         FastAPI routes
 backend/storage.py      project files; background jobs merge their results back three-way
 backend/services/       script_gen (narration), llm* (providers), tts / tts_cloud / dialogue (voice-over),
-                        video / renderer / textlayout (rendering), slides / slide_reveal / slide_sequence / clips (PPT import),
+                        video / renderer / textlayout (rendering), slides / slide_reveal / slide_sequence / slide_timeline / clips (PPT import),
                         second_subs (second-language subtitles), asr / voice (speech), redact, cards …
 static/                 editor (plain HTML / CSS / JS) and locales/ (en, de, fr, pl, it, es, nl)
 extension/              Chrome MV3 extension
@@ -428,7 +450,7 @@ tests/                  regression tests
 ```
 
 - **Self-test** without the extension: `python tools/selftest.py --no-tts` (render only), `python tools/selftest.py` (with voice-over), `--llm` (with AI narration)
-- **Regression tests:** `.venv\Scripts\python.exe -X utf8 tests\run_all.py --lint` — 25 groups with synthetic data, fake AI and voice clients (no credits used), isolated data folders. See [tests/README.md](tests/README.md)
+- **Regression tests:** `.venv\Scripts\python.exe -X utf8 tests\run_all.py --lint` — 30 groups with synthetic data, fake AI and voice clients (no credits used), isolated data folders. See [tests/README.md](tests/README.md)
 - **Translations:** interface strings are written in Chinese inside `t()`; translations live in `static/locales/<lang>.json`. Run `python tools/i18n_extract.py` to list missing translations and mismatched placeholders (`--missing de` lists what German still needs, `--sync-extension` copies the extension's strings). Plurals use ICU syntax, e.g. `{n, plural, one {# step} other {# steps}}`
 
 ## Known limitations

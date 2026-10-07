@@ -10,8 +10,9 @@ import os
 import re
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 from .. import config, i18n
 from ..models import Project, Step
@@ -157,7 +158,7 @@ def _pyttsx3_synth(text: str, out_path: Path) -> None:
 
 def synth(text: str, voice: str, out_path: Path,
           rate: str = "", volume: str = "", pitch: str = "") -> Tuple[float, List[Dict[str, float]]]:
-    """Synthesise speech; returns (duration in seconds, word boundaries). Voices with a service prefix (doubao: / minimax: / qwen:) go to the paid services."""
+    """Synthesise speech; returns (duration in seconds, word boundaries). Voices with a service prefix (doubao: / minimax: / qwen: / gemini: / elevenlabs: / azure:) go to the paid services."""
     text = (text or "").strip()
     if not text:
         raise TTSError(i18n.t("解说文本为空。"))
@@ -240,6 +241,25 @@ def synth_card(audio_dir: Path, kind: str, text: str, voice: str,
     return dur
 
 
+class _Para(NamedTuple):
+    pos: int                      # place in the whole list, from 1 (what the progress message shows)
+    key: str
+    step: Optional[Step]          # None = the intro or the outro
+    text: str
+    fname: str
+    path: Path
+
+
+def _tts_workers(voice: str, n: int) -> int:
+    """How many paragraphs to voice at once. Mostly waiting for the service, so a few in parallel is several times faster; paid services
+    limit parallel requests by plan, so they get fewer. `tts_workers` in the settings overrides (0 = automatic)."""
+    want = int(config.load().get("tts_workers", 0) or 0)
+    if want <= 0:
+        from . import tts_cloud
+        want = 2 if tts_cloud.is_cloud(voice) else 3
+    return max(1, min(want, n))
+
+
 def synth_project(
     proj: Project,
     voice: str = "",
@@ -274,46 +294,107 @@ def synth_project(
     if proj.outro and cfg.get("outro_enabled", True):
         todo.append(("__outro__", None, proj.outro))
 
-    done = 0
     made = 0
     errors: List[str] = []
-    for key, step, text in todo:
-        done += 1
+    pending: List[_Para] = []
+    for pos, (key, step, text) in enumerate(todo, 1):
         fname = f"{key}.mp3"
-        path = audio_dir / fname
         if step is not None:
             if only_missing and step.audio and (audio_dir / step.audio).exists() and step.audio_duration > 0:
                 continue
         else:
             if only_missing and card_audio(audio_dir, key.strip("_"), text, voice):
                 continue
-        if progress:
-            progress(done / max(1, len(todo)), i18n.t("合成语音 {i}/{n}：{text}…", i=done, n=len(todo), text=text[:18]))
-        times: List[List[float]] = []
+        pending.append(_Para(pos, key, step, text, fname, audio_dir / fname))
+
+    def synth_para(para: _Para) -> Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path]]:
+        """Runs in a worker thread. A step's voice-over is made in a file of its own; it only replaces the real audio file in take(), together with the
+        step's record (duration, subtitle times), so a paragraph that is dropped (Stop) never leaves new audio next to old times."""
+        if para.step is None:
+            return synth_card(audio_dir, para.key.strip("_"), para.text, voice, rate, volume), [], [], None
+        out = para.path.with_name(f"{para.path.stem}.{uuid.uuid4().hex[:6]}.new.mp3")
         try:
-            if step is None:
-                dur, bounds = synth_card(audio_dir, key.strip("_"), text, voice, rate, volume), []
-            elif dialogue_on and step.lines:
-                dur, bounds, times = dialogue.synth_lines(proj, step, path, rate, volume)
-            else:
-                dur, bounds = synth(text, voice, path, rate, volume)
-        except Exception as e:
-            errors.append(f"[{key}] {e}")
-            continue
+            if dialogue_on and para.step.lines:
+                return (*dialogue.synth_lines(proj, para.step, out, rate, volume), out)
+            dur, bounds = synth(para.text, voice, out, rate, volume)
+            return dur, bounds, [], out
+        except BaseException:
+            out.unlink(missing_ok=True)
+            raise
+
+    def take(para: _Para, res: Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path]]) -> None:
+        """Back in the calling thread: the new audio file and the step's record change together."""
+        nonlocal made
+        dur, bounds, times, new = res
+        if new is not None:
+            try:
+                storage._replace_with_retry(new, para.path)
+            except OSError as e:
+                new.unlink(missing_ok=True)
+                errors.append(f"[{para.key}] {e}")
+                return
         made += 1
-        if step is not None:
-            step.audio = fname
-            step.voice_source = "tts"
-            step.audio_duration = dur
-            step.boundaries = bounds
-            step.line_times = times
+        if para.step is not None:
+            para.step.audio = para.fname
+            para.step.voice_source = "tts"
+            para.step.audio_duration = dur
+            para.step.boundaries = bounds
+            para.step.line_times = times
+
+    def note_progress(para: _Para) -> None:
+        """Says which paragraph is next; this is also where a Stop from the user is noticed (the progress callback raises)."""
+        if progress:
+            progress(para.pos / max(1, len(todo)), i18n.t("合成语音 {i}/{n}：{text}…", i=para.pos, n=len(todo), text=para.text[:18]))
+
+    # Voiced a few at a time: each paragraph is mostly waiting for the service, so this is several times faster. At most `workers` are in flight;
+    # a finished one is saved first, then Stop is checked, then the next one starts: no new one starts after a Stop (with one worker this is exactly
+    # the old one-by-one order). The ones already in flight when Stop comes are waited for and saved too, the way the single one used to be.
+    # Results are applied in this thread only. Q&A steps already voice their lines in parallel, so those go one step at a time.
+    workers = 1 if dialogue_on else _tts_workers(voice, len(pending))
+    queue = list(pending)
+    flying: List[Tuple[_Para, Any]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="tts") as ex:
+        def launch() -> None:
+            if queue:
+                para = queue.pop(0)
+                flying.append((para, ex.submit(synth_para, para)))
+
+        try:
+            if queue:
+                note_progress(queue[0])
+            for _ in range(workers):
+                launch()
+            while flying:
+                para, fut = flying.pop(0)
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    errors.append(f"[{para.key}] {e}")
+                else:
+                    take(para, res)
+                if flying or queue:
+                    note_progress(flying[0][0] if flying else queue[0])
+                launch()
+        except BaseException:
+            ex.shutdown(wait=True, cancel_futures=True)      # stopped (or an error): nothing new starts, the ones in flight finish
+            for para, fut in flying:
+                if not fut.cancelled() and fut.exception() is None:
+                    take(para, fut.result())                 # finished work is kept, with its record
+            raise
     if progress:
         progress(1.0, i18n.t("语音完成，共生成 {n} 段，{failed} 段失败", n=made, failed=len(errors)) if errors
                  else i18n.t("语音完成，共生成 {n} 段", n=made))
     return {"generated": made, "total": len(todo), "errors": errors, "voice": voice}
 
 
-_SENT_SPLIT = re.compile(r"(?<=[。！？!?；;\.])\s*")
+# A full stop ends a sentence only when nothing glues it to the next word: a space after it, or a capital letter / Chinese character directly
+# after it ("chapter.Nova"). Not inside a number or a name ("5.7 kg", "v1.8.1", "example.com"), or a subtitle would turn the page at "5."
+_SENT_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|(?<=\.)\s+|(?<=\.[\"'”’」』）)\]])\s+|(?<=\.)(?=[A-Z一-鿿])")
+
+
+def _in_token(ch: str) -> bool:
+    """Part of a number or a Latin word ("5.7", "3.5mm", "A4"), which a hard cut must not tear apart."""
+    return ch.isascii() and (ch.isalnum() or ch in ".,/-%")
 
 
 def split_sentences(text: str, max_len: int = 0) -> List[str]:
@@ -331,8 +412,10 @@ def split_sentences(text: str, max_len: int = 0) -> List[str]:
             cut = -1
             for ch in ("，", ",", "、", "；", ";", " "):
                 cut = max(cut, p.rfind(ch, 0, max_len + 1))
-            if cut < max_len // 2:          # no good break point: hard cut
+            if cut < max_len // 2:          # no good break point: hard cut, but not through the middle of a number or a Latin word
                 cut = max_len - 1
+                while cut > max_len // 2 and _in_token(p[cut]) and _in_token(p[cut + 1]):
+                    cut -= 1
             out.append(p[:cut + 1].strip())
             p = p[cut + 1:].strip()
         if p:
