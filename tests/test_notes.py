@@ -165,6 +165,68 @@ check("一键生成成功", r["status"] == "done", r.get("error", ""))
 check("第 1 页用了编辑器里改过的备注", p3.steps[0].narration == "我在编辑器里改过的备注。", p3.steps[0].narration)
 check("没有调用 DeepSeek", not RecordingLLM.calls)
 
+print("\n== 备注变成解说：折行接上，段落和分点各自成句 ==")
+N = script_gen.notes_as_narration
+check("小标题 + 空行 + 正文：小标题自己成一句（配音会停顿、字幕在这里断开），不和下一句粘在一起",
+      N("Opening Remarks\n\nA good way to start is a question.") == "Opening Remarks. A good way to start is a question.",
+      N("Opening Remarks\n\nA good way to start is a question."))
+check("一句话中间的折行：直接接上，不加句号", N("One sentence that wraps\nin the middle and ends.") == "One sentence that wraps in the middle and ends.")
+check("分点：每一项成一句，项目符号不念出来，冒号后面不再加句号",
+      N("Key points:\n- Fast charging\n- Long range\n• Quiet cabin") == "Key points: Fast charging. Long range. Quiet cabin",
+      N("Key points:\n- Fast charging\n- Long range\n• Quiet cabin"))
+check("编号保留", N("1. First step\n2. Second step") == "1. First step. 2. Second step", N("1. First step\n2. Second step"))
+check("中文：直接拼接，补的是「。」，已有句号的不重复加",
+      N("开场白\n\n先确认客户需求，\n再介绍产品。\n注意语气要自然。") == "开场白。先确认客户需求，再介绍产品。注意语气要自然。",
+      N("开场白\n\n先确认客户需求，\n再介绍产品。\n注意语气要自然。"))
+check("段落以逗号结尾：句子还没完，不加句号", N("Heading,\n\ncontinues after a comma") == "Heading, continues after a comma")
+check("编辑器「用备注替换解说词」用的是同一套规则", c.post("/api/notes/narration", json={"text": "Opening Remarks\n\n- One\n- Two"}).json()
+      == {"text": "Opening Remarks. One. Two"})
+
+print("\n== 导入后自动一键生成（开关默认关闭） ==")
+rendered = []
+video.render_project = lambda proj, **k: (rendered.append(proj.id), {"file": "x.mp4"})[1]
+RecordingLLM.calls.clear()
+r = wait(c.post(f"/api/import/slides/{man['id']}/create",
+                json={"notes_mode": "verbatim", "missing": "empty", "language": "zh-CN", "auto_generate": True}).json())
+res = r["result"]
+check("打开开关：导入完成后接着启动了一键生成", r["status"] == "done" and res.get("auto_job"), res)
+a = wait({"id": res["auto_job"]}) if res.get("auto_job") else {}
+pa = storage.load(res["project_id"])
+check("一键生成做完：配音、渲染都做了", a.get("status") == "done" and rendered == [pa.id], (a.get("status"), a.get("error"), rendered))
+check("解说按导入时的选择来：没备注的页仍然留空，不让 AI 补写", pa.steps[2].narration == "" and not RecordingLLM.calls
+      and "script" not in (a.get("result") or {}), (pa.steps[2].narration, len(RecordingLLM.calls)))
+check("有解说的页都配了音", [bool(s.audio) for s in pa.steps] == [True, True, False, True], [bool(s.audio) for s in pa.steps])
+check("任务进度从配音开始，不显示「第 1/3 步：生成解说脚本」", not any("生成解说脚本" in str(x) for x in a.get("log", [])), a.get("log", [])[:3])
+
+rendered.clear()
+r = wait(c.post(f"/api/import/slides/{man['id']}/create",
+                json={"notes_mode": "verbatim", "missing": "empty", "language": "zh-CN"}).json())
+check("开关关着（默认）：只导入，不自动渲染", r["status"] == "done" and not r["result"].get("auto_job") and not rendered, r["result"].get("auto_job"))
+
+rendered.clear()
+r = wait(c.post(f"/api/import/slides/{man['id']}/create",
+                json={"notes_mode": "verbatim", "missing": "empty", "language": "zh-CN", "auto_voice": False, "auto_generate": True}).json())
+a = wait({"id": r["result"]["auto_job"]})
+pa = storage.load(r["result"]["project_id"])
+check("没勾「写完解说自动配音」也一样：一键生成里会配音", a["status"] == "done" and [bool(s.audio) for s in pa.steps] == [True, True, False, True]
+      and rendered == [pa.id], [bool(s.audio) for s in pa.steps])
+
+
+class NoAI:
+    def __init__(self, *a, **k):
+        from backend.services.llm import LLMError
+        raise LLMError("test: no AI configured")
+
+
+script_gen.get_client = NoAI
+rendered.clear()
+r = wait(c.post(f"/api/import/slides/{man['id']}/create",
+                json={"notes_mode": "ignore", "language": "zh-CN", "auto_generate": True}).json())
+script_gen.get_client = RecordingLLM
+check("要 AI 写解说但 AI 用不了：项目照样建好，但不自动配音渲染，并说明原因",
+      r["status"] == "done" and not r["result"].get("auto_job") and not rendered and "没有自动接着配音和渲染" in r["result"].get("warning", ""),
+      (r["result"].get("auto_job"), r["result"].get("warning", "")[-60:]))
+
 print("\n== PDF ==")
 pdf = SP / "pptspike" / "export_slides.pdf"
 man_pdf = upload(pdf, "导出.pdf")

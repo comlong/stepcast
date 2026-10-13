@@ -251,7 +251,10 @@ SLIDES_SYSTEM = """你是一名培训讲师，要把一份幻灯片讲成配音�
    没有 content_items 时，围绕刚播放的视频和这一页的标题简短说一两句。
 10. 标了 "steps_in_order": true 的页：content_items 是页面上随点击一步一步出现的内容。旁白必须严格按这个顺序，一项不漏地讲到每一项
    （不要调换顺序，不要合并，不要跳过），每一项至少用一句话单独讲，并说出这一项文字里的关键词（原文是外语就用输出语言里的对应说法），
-   让观众在这一项出现的时候正好听到它。"""  # i18n: ignore
+   让观众在这一项出现的时候正好听到它。
+11. 讲到内容块时直接讲内容，用自然的过渡衔接（「先说……」「再看……」「另外……」），不要说「第一块」「第二块」「第一项」这类编号，
+   观众看不到这些编号。
+12. 旁白全部用输出语言说：页面和备注里的外语词换成输出语言里的说法，只有品牌名、车型或产品型号、专有名词保留原文。"""  # i18n: ignore
 
 SLIDES_TMPL = """请为下面这份幻灯片写配音旁白。  # i18n: ignore
 
@@ -271,6 +274,38 @@ SLIDES_TMPL = """请为下面这份幻灯片写配音旁白。  # i18n: ignore
   "steps": [{{"i": 0, "title": "...", "narration": "..."}}]
 }}
 steps 必须覆盖输入的全部 i。"""
+
+
+_CJK_CHAR = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff]")
+_BULLET = re.compile(r"^(?:[-–—•·▪◦●○■□*]|\d{1,2}[.)、])\s+")                     # a list item: "- …", "• …", "1. …", "2) …"
+_SENTENCE_DONE = re.compile(r"[.!?;:。！？；：…,，、][\"'”’」』）)\]]*$")              # ends a sentence (or goes on after a comma / colon)
+
+
+def notes_as_narration(notes: str) -> str:
+    """Speaker notes read as narration, word for word. A line break inside a sentence is only layout and is joined (directly for
+    Chinese / Japanese, with a space otherwise). But a new paragraph (after an empty line) or a list item starts a sentence of its own:
+    when the text before it has no full stop, one is added, so the voice pauses and the subtitle turns there instead of running a
+    heading into the next sentence. List bullets ("-", "•") aren't read out; numbers ("1.") stay."""
+    notes = (notes or "").strip()
+    if not notes:
+        return ""
+    cjk = len(_CJK_CHAR.findall(notes)) > len(re.findall(r"[A-Za-z]", notes))
+    joiner, stop = ("", "。") if cjk else (" ", ".")
+    out: List[str] = []
+    gap = False                                          # an empty line since the last text
+    for raw in notes.splitlines():
+        line = raw.strip()
+        if not line:
+            gap = True
+            continue
+        item = _BULLET.match(line)
+        if item and not item.group(0)[0].isdigit():
+            line = line[item.end():]                     # the bullet itself isn't read
+        if out and (gap or item) and not _SENTENCE_DONE.search(out[-1]):
+            out[-1] += stop
+        out.append(line)
+        gap = False
+    return joiner.join(out)
 
 
 def generate_slides_script(
@@ -314,10 +349,7 @@ def generate_slides_script(
             as_script.add(s.id)
             continue
         if notes_mode == "verbatim" and s.slide_notes.strip():
-            # line breaks in the notes are just layout; join them for reading: directly for Chinese / Japanese, with spaces otherwise (judged by the notes' own script)
-            cjk = len(re.findall(r"[぀-ヿ一-鿿]", s.slide_notes))  # i18n: ignore
-            joiner = "" if cjk > len(re.findall(r"[A-Za-z]", s.slide_notes)) else " "
-            text = re.sub(r"\s*\n\s*", joiner, s.slide_notes.strip())
+            text = notes_as_narration(s.slide_notes)
             s.narration = text
             s.caption = text
             drop_stale_lines(s)
@@ -412,7 +444,7 @@ DIALOGUE_SYSTEM = """你要把一份幻灯片写成两个人对话讲解的视�
 内容：
 1. 台词完全依据页面内容（标题、正文、备注）；不要编造页面和备注里都没有的数据、结论。
 2. 不要因为是对话就压缩内容：备注和页面上的要点都要讲到，讲师讲的信息量不少于一个人单独讲这一页；主持人的话是额外加的。篇幅按「详细程度」来。
-3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。标了 "steps_in_order": true 的页，顺序和每一项都必须严格遵守：不能调换、合并或漏掉任何一项。
+3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。直接讲内容、自然过渡，不要说「第一块」「第二块」「第一项」这类编号，观众看不到这些编号。标了 "steps_in_order": true 的页，顺序和每一项都必须严格遵守：不能调换、合并或漏掉任何一项。
 4. 封面、过渡页、只有一张图的页可以短，两三句即可。
 5. 标了 "video_first": true 的页：这一页先播放视频，台词在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
    台词只讲这几条文字（按顺序一块一块地讲），可以从「刚才视频里……」接过来；页面上的其他内容不讲。没有 content_items 时围绕刚播放的视频简短聊几句。
@@ -422,7 +454,7 @@ DIALOGUE_SYSTEM = """你要把一份幻灯片写成两个人对话讲解的视�
 7. 讲师先直接回应，再展开；可以举例子、打比方、给实用建议，偶尔反问主持人；语气自然（「其实」「说白了」「举个例子」这类口头连接词适量用）。
 8. 节奏要有变化：不要每轮都是「主持人一个问题 + 讲师一段回答」；可以讲师连着讲两句、主持人插一句追问，也可以主持人先抛出一个观点让讲师接着补充。一句台词只说一两句话，长内容拆成几句。
 9. 不要每句都「好问题」「没错」「对」开头，不要播音腔和书面语，不要每页都用「那……是什么？」开头；新的一页从上一页的话题自然接过来。
-10. 不要说「这一页」「如图所示」，不要逐字念要点列表，要把要点讲成人话。
+10. 不要说「这一页」「如图所示」，不要逐字念要点列表，要把要点讲成人话。台词全部用输出语言说：页面和备注里的外语词换成输出语言里的说法，只有品牌名、车型或产品型号、专有名词保留原文。
 
 格式：
 11. 只输出 JSON。text 里只写这句话本身：不要写「主持人：」「讲师：」这样的说话人前缀，也不要称呼对方的名字或称谓（观众听不到名字）。

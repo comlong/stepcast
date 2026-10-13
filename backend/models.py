@@ -295,6 +295,7 @@ class SlidesCreateReq(BaseModel):
     language: str = ""
     voice: str = ""
     auto_voice: bool = True         # generate the voice-over right after the narration
+    auto_generate: bool = False     # then go straight on with "Generate all" (voice-over, the video) on the new project
     videos: bool = True             # videos in slides: insert a "video" step after their slide
     reveal: bool = True             # reveal points one by one + highlight the current one (needs PowerPoint)
     dialogue: bool = False          # two-person Q&A: the host asks, the expert explains

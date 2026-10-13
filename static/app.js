@@ -163,11 +163,22 @@ function fillVoiceSelect(sel, locale, selected) {
   if (want) sel.value = want;
 }
 
+/** A line of a slide's own text that can stand for it when it has no title: the first short one that isn't a footnote ("* …"). */
+function slideHeadline(text) {
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (line.length >= 3 && line.length <= 60 && !/^[*※]/.test(line) && /\p{L}/u.test(line)) return line;
+  }
+  return '';
+}
+
 /* ---------- projects ---------- */
 
 async function openProject(pid) {
   stopPlayback();
   S.picked.clear(); S.multi = false;
+  // an AI rewrite instruction is kept while you go from page to page, but it belongs to that project
+  if (!S.project || S.project.id !== pid) $('#fRewrite').value = '';
   await flushSaves();
   try {
     S.project = await api('/api/projects/' + pid);
@@ -313,7 +324,7 @@ function renderSteps() {
         : (s.kind === 'video' && s.clip && s.clip.file
           ? `/api/projects/${p.id}/steps/${s.id}/preview?t=0.5&scale=0.2` : '')}" loading="lazy" alt="">
       <div class="meta">
-        <div class="t"><span class="kind-dot k-${escapeHtml(s.kind)}"></span>${escapeHtml(s.title || KIND_LABEL[s.kind] || s.kind)}</div>
+        <div class="t"><span class="kind-dot k-${escapeHtml(s.kind)}"></span>${escapeHtml(s.title || (s.kind === 'slide' && slideHeadline(s.slide_text)) || KIND_LABEL[s.kind] || s.kind)}</div>
         <div class="d">${escapeHtml(s.narration || stepSummary(s))}</div>
       </div>
       ${playBits(s.id)}
@@ -676,7 +687,9 @@ function renderStage() {
     drawHighlight();
     renderRedactions();
     if (!S.redactMode) {
-      $('#stageHint').textContent = s.target && s.target.rect ? t('拖动橙色框可调整高亮区域') : t('这一步没有高亮区域');
+      // (a slide has no highlight: that is for recorded steps)
+      $('#stageHint').textContent = s.kind === 'slide' ? t('幻灯片原图。看成片里的样子点「渲染预览」，连同动画和配音放一遍点「▶ 回放本页」')
+        : s.target && s.target.rect ? t('拖动橙色框可调整高亮区域') : t('这一步没有高亮区域');
     }
   } else {
     renderRedactions();
@@ -1617,6 +1630,8 @@ function bindUI() {
   };
 
   $('#btnTranslate').onclick = () => {
+    // translating into the language the project already has makes no sense: offer the most likely other one
+    if ($('#tLang').value === S.project.language) $('#tLang').value = S.project.language.startsWith('en') ? 'zh-CN' : 'en-US';
     fillVoiceSelect($('#tVoice'), $('#tLang').value);
     // slide projects don't translate the existing narration: it is rewritten in the target language from the deck (backend switch_language)
     const slides = S.project.source === 'slides';
@@ -1639,7 +1654,8 @@ function bindUI() {
   };
 
   $('#btnExport').onclick = (e) => showMenu(e.currentTarget, [
-    [t('图文文档（Markdown）'), () => window.open(`/api/projects/${S.project.id}/export/markdown`, '_blank')],
+    // a zip: the Markdown file with its pictures beside it, so it can be passed on (the pictures of the plain text only show on this computer)
+    [t('图文文档（Markdown，含图片）'), () => { location.href = `/api/projects/${S.project.id}/export/markdown.zip`; }],
     [t('脚本 JSON'), () => window.open(`/api/projects/${S.project.id}/export/script`, '_blank')],
     [t('字幕 SRT'), () => {
       const n = (S.project.output || '').replace(/\.mp4$/, '.srt');
@@ -2387,7 +2403,7 @@ function renderImport() {
       <span class="tags">${(x.videos || []).length ? `<span class="v">${t('视频')}</span>` : ''}${x.notes ? `<span class="n">${t('备注')}</span>`
         : (mode === 'verbatim' && anyNotes ? `<span class="miss">${t('无备注')}</span>` : '')}${x.hidden ? `<span>${t('隐藏页')}</span>` : ''}</span>
       <img src="/api/import/slides/${m.id}/thumb/${x.i}" loading="lazy" alt="">
-      <div class="cap">${x.i}. ${escapeHtml(x.title || t('（无标题）'))}</div>
+      <div class="cap">${x.i}. ${escapeHtml(x.title || slideHeadline(x.text))}</div>
     </div>`).join('');
   $$('#imGrid .im-card').forEach(c => c.onclick = () => {
     const i = Number(c.dataset.i);
@@ -2457,7 +2473,8 @@ async function imCreate() {
     dialogue: $('#imMode').value === 'dialogue',
     host_voice: $('#imHostVoice').value,
     expert_voice: $('#imExpertVoice').value,
-    auto_voice: $('#imAutoVoice').checked,
+    auto_voice: $('#imAutoVoice').checked || $('#imAutoAll').checked,
+    auto_generate: $('#imAutoAll').checked,          // then "Generate all" (voice-over and the video) runs by itself on the server
     videos: $('#imVideos').checked,
     reveal: !$('#imRevealWrap').classList.contains('hidden') && $('#imReveal').checked,
   };
@@ -2468,7 +2485,11 @@ async function imCreate() {
     const r = await pollJob(job.id, t('生成幻灯片视频'), { refresh: false });
     if (r && r.project_id) {
       await openProject(r.project_id);
-      if (!r.warning) toast(t('幻灯片项目已生成，检查一下解说后点「③ 渲染视频」'));   // 有提醒时 pollJob 已经弹过了
+      if (r.auto_job) {
+        // "Generate all" is already running for the new project: follow it like the button does, then show the video
+        const a = await pollJob(r.auto_job, t('一键生成'));
+        if (a) openVideo();
+      } else if (!r.warning) toast(t('幻灯片项目已生成，检查一下解说后点「③ 渲染视频」'));   // 有提醒时 pollJob 已经弹过了
     }
   } catch (e) { toast(e.message, true); }
   $('#imCreate').disabled = false;
@@ -2565,12 +2586,15 @@ function bindVoiceAndImport() {
     await flushSaves();                               // the preview is rendered by the server from the saved step
     renderInspector(); renderStage();
   };
-  $('#btnUseNotes').onclick = () => {
+  $('#btnUseNotes').onclick = async () => {
     const notes = $('#fSlideNotes').value.trim();
     if (!notes) return;
-    $('#fNarration').value = notes;
-    $('#fCaption').value = notes;
-    saveStep({ narration: notes, caption: notes });
+    // the same text the import makes of notes: lines of a sentence joined, a heading or list item read as a sentence of its own
+    let text = notes;
+    try { text = (await api('/api/notes/narration', { method: 'POST', body: { text: notes } })).text || notes; } catch (e) { /* use them as they are */ }
+    $('#fNarration').value = text;
+    $('#fCaption').value = text;
+    saveStep({ narration: text, caption: text });
     renderInspector();
   };
 
@@ -2613,6 +2637,12 @@ function bindVoiceAndImport() {
   };
   $('#imMode').onchange = renderImport;
   $('#imCreate').onclick = imCreate;
+  // "Generate all right after importing" includes the voice-over: the voice-over switch is on and locked while it is on
+  $('#imAutoAll').onchange = () => {
+    const on = $('#imAutoAll').checked, v = $('#imAutoVoice');
+    if (on) { v.dataset.was = v.checked ? '1' : ''; v.checked = true; } else if (v.dataset.was !== undefined) v.checked = v.dataset.was === '1';
+    v.disabled = on;
+  };
   bindDialogue();
 }
 

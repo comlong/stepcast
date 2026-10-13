@@ -25,7 +25,7 @@ from .models import (CardStyle, CaptureStepReq, DialogueLine, PlaybackReq, Proje
 from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
                        slides, tts, tts_cloud, video, voice)
 
-app = FastAPI(title="StepCast", version="1.9.1")
+app = FastAPI(title="StepCast", version="1.9.2")
 
 # ---- local access only ---------------------------------------------------
 # The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
@@ -1039,13 +1039,27 @@ def slides_thumb(iid: str, n: int, full: bool = False):
     return FileResponse(p, headers={"Cache-Control": "public, max-age=3600"})
 
 
+@app.post("/api/notes/narration")
+def notes_to_narration(body: Dict[str, Any] = Body(...)):
+    """The narration a slide's speaker notes give, by the same rules as the import's "notes as narration" (the editor's "use the notes" button)."""
+    return {"text": script_gen.notes_as_narration(str(body.get("text") or ""))}
+
+
 @app.post("/api/import/slides/{iid}/create")
 def slides_create(iid: str, req: SlidesCreateReq):
     if not slides.load_manifest(iid):
         raise HTTPException(404, i18n.t("导入记录不存在，请重新上传"))
 
     def work(job: jobs.Job):
-        return slides.create_project(iid, req, job.progress)
+        res = slides.create_project(iid, req, job.progress)
+        if req.auto_generate:
+            if res.get("script") is None:
+                # the narration couldn't be written (no AI, an AI error): a video of silent pages isn't what was asked for
+                res["warning"] = "\n\n".join(w for w in [res.get("warning", ""), i18n.t("解说没能生成，所以没有自动接着配音和渲染。")] if w)
+            else:
+                # the narration is already written the way the import dialog said (notes, AI, pages left empty): voice-over and video only
+                res["auto_job"] = _auto_job(res["project_id"], write_script=False)["id"]
+        return res
     return jobs.submit("slides_create", work)
 
 
@@ -1374,28 +1388,34 @@ def gen_video(pid: str, req: RenderReq):
 def auto_pipeline(pid: str, body: Dict[str, Any] = Body(default={})):
     """One click: write the script -> voice-over -> render the video."""
     _need(pid)
-    style = body.get("style", "friendly")
-    overwrite = bool(body.get("overwrite", False))
+    return _auto_job(pid, body.get("style", "friendly"), bool(body.get("overwrite", False)))
+
+
+def _auto_job(pid: str, style: str = "friendly", overwrite: bool = False, write_script: bool = True) -> Dict[str, Any]:
+    """Start "Generate all" on a project. write_script=False: the narration is already there (a deck just imported with its own
+    narration choices), so only the voice-over and the video are made."""
 
     def work(job: jobs.Job):
         out: Dict[str, Any] = {}
         # take a fresh snapshot for every stage: changes made in the editor between stages (e.g. unticking a step) are seen by the next stage
-        job.progress(0.02, i18n.t("第 1/3 步：生成解说脚本"))
-        before, proj = _snapshot(pid)
-        out["script"] = script_gen.generate_script(
-            proj, style=style, overwrite=overwrite,
-            progress=lambda f, m: job.progress(0.02 + f * 0.23, m))
-        storage.commit(pid, before, proj, step_fields=STEP_TEXT + AUDIO, project_fields=CARD)
+        if write_script:
+            job.progress(0.02, i18n.t("第 1/3 步：生成解说脚本"))
+            before, proj = _snapshot(pid)
+            out["script"] = script_gen.generate_script(
+                proj, style=style, overwrite=overwrite,
+                progress=lambda f, m: job.progress(0.02 + f * 0.23, m))
+            storage.commit(pid, before, proj, step_fields=STEP_TEXT + AUDIO, project_fields=CARD)
 
-        job.progress(0.26, i18n.t("第 2/3 步：合成语音"))
+        v0 = 0.26 if write_script else 0.02                  # where the voice-over starts on the progress bar
+        job.progress(v0, i18n.t("第 2/3 步：合成语音") if write_script else i18n.t("合成语音"))
         before, proj = _snapshot(pid)
         with _keep_done_on_stop(pid, before, proj, step_fields=AUDIO, project_fields=("voice", "speakers")):
             out["tts"] = tts.synth_project(
                 proj, only_missing=not overwrite,
-                progress=lambda f, m: job.progress(0.26 + f * 0.24, m))
+                progress=lambda f, m: job.progress(v0 + f * (0.5 - v0), m))
         storage.commit(pid, before, proj, step_fields=AUDIO, project_fields=("voice", "speakers"))
 
-        job.progress(0.5, i18n.t("第 3/3 步：渲染视频"))
+        job.progress(0.5, i18n.t("第 3/3 步：渲染视频") if write_script else i18n.t("渲染视频"))
         _align_reveal(pid, job, 0.5, 0.52)
         before, proj = _snapshot(pid)
         out["video"] = video.render_project(
@@ -1515,9 +1535,41 @@ def get_file(pid: str, kind: str, name: str, download: bool = False):
 
 @app.get("/api/projects/{pid}/export/markdown", response_class=PlainTextResponse)
 def export_markdown(pid: str):
-    """Export a how-to document with images (can be pasted into any wiki or document tool)."""
+    """The how-to document as text, its images linked to this running app (for reading it here; to pass it on, use the zip below)."""
     proj = _need(pid)
     port = config.get("server_port")
+    return _markdown(proj, lambda n, s: f"http://127.0.0.1:{port}/api/projects/{pid}/file/screenshots/{s.screenshot}")
+
+
+@app.get("/api/projects/{pid}/export/markdown.zip")
+def export_markdown_zip(pid: str):
+    """The how-to document as a zip: the Markdown file and an images folder it links to with relative paths, so it shows its pictures on
+    any computer and in any Markdown tool or wiki, without this app."""
+    import zipfile
+    proj = _need(pid)
+    shots = storage.screenshots_dir(pid)
+    pics: Dict[str, Path] = {}
+
+    def image(n: int, s: Step) -> str:
+        name = f"images/{n:02d}{Path(s.screenshot).suffix.lower() or '.png'}"
+        pics[name] = shots / s.screenshot
+        return name
+    text = _markdown(proj, image)
+    slug = video._safe_name(proj.title or proj.name)
+    tmp_dir = config.DATA_DIR / "_tmp"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    path = tmp_dir / f"md_{uuid.uuid4().hex[:8]}.zip"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"{slug}.md", text)
+        for name, src in pics.items():
+            if src.exists():
+                z.write(src, name, compress_type=zipfile.ZIP_STORED)          # (PNG / JPEG are compressed already)
+    return FileResponse(path, filename=f"{slug}.zip", media_type="application/zip", content_disposition_type="attachment",
+                        background=BackgroundTask(lambda: path.unlink(missing_ok=True)))
+
+
+def _markdown(proj: Project, image_ref) -> str:
+    """The how-to document; image_ref(step number, step) gives the link of a step's picture."""
     lines = [f"# {proj.title or proj.name}", ""]
     if proj.subtitle:
         lines += [f"> {proj.subtitle}", ""]
@@ -1537,9 +1589,8 @@ def export_markdown(pid: str):
         elif text:
             lines.append(text)
         if s.screenshot:
-            url = f"http://127.0.0.1:{port}/api/projects/{pid}/file/screenshots/{s.screenshot}"
             lines.append("")
-            lines.append(f"![{head}]({url})")
+            lines.append(f"![{head}]({image_ref(n, s)})")
         lines.append("")
     if proj.outro and video.effective_config(proj).get("outro_enabled", True):
         lines += ["---", "", proj.outro, ""]

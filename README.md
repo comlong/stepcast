@@ -28,7 +28,7 @@ Your data stays on your machine. Speech recognition runs locally. Only writing n
 | Redaction | Automatically blurs e-mail addresses, phone numbers, ID / bank card numbers, IP addresses and names while recording; draw boxes by hand too |
 | Translate | Switch the whole script to another language with matching voices; slide projects are rewritten from the original slides instead of translating the narration |
 | Script editor | Edit text, adjust highlight boxes, reorder and delete steps, preview single steps, AI rewrite |
-| Export | MP4, SRT subtitles, Markdown how-to document, script JSON |
+| Export | MP4, SRT subtitles, Markdown how-to document with its images (zip), script JSON |
 
 ---
 
@@ -187,7 +187,7 @@ Stopping opens the editor automatically.
 - **🌐 Translate** — switch the whole script to another language with matching voices
   - Recorded projects: the existing narration is translated
   - Slide projects: the narration is **not** translated; it is rewritten in the target language from the original slides (text + speaker notes), together with the title, intro and outro. This avoids "English deck → Chinese narration → back to English" double translation
-- **Export ▾** — Markdown document / script JSON / SRT subtitles
+- **Export ▾** — How-to document (a zip: the Markdown file and its images, linked with relative paths, so it shows its pictures on any computer and in any Markdown tool) / script JSON / SRT subtitles
 
 Rendering takes roughly 0.2–0.5× the video length (1080p30; slide projects are faster), with parallel rendering and GPU encoding (see [Rendering speed](#rendering-speed)).
 
@@ -237,7 +237,7 @@ In the right column's **Voice-over** card: **🎙 Record my voice** (pick microp
 
    | Option | What happens | Calls the AI |
    |---|---|---|
-   | **Use the notes as narration (recommended)** | Notes are used word for word as narration and subtitles (line breaks joined). Slides whose notes are in a different language than the narration are handed to the AI, which tells the full content of the notes in the narration language | Not for same-language slides |
+   | **Use the notes as narration (recommended)** | Notes are used word for word as narration and subtitles: a line break inside a sentence is joined; a heading or paragraph (after an empty line) and each list item stay sentences of their own — a full stop is added where they have none, so the voice pauses and the subtitle turns there — and list bullets aren't read out. **Use the notes as narration** in the editor does the same. Slides whose notes are in a different language than the narration are handed to the AI, which tells the full content of the notes in the narration language | Not for same-language slides |
    | **AI rewrites the notes in a spoken style** | The notes' intent comes first, slide text supports it; the AI writes a presenter's narration | Yes |
    | **Ignore notes, AI writes from the slide content** | Uses only titles and slide text | Yes |
 
@@ -245,6 +245,7 @@ In the right column's **Voice-over** card: **🎙 Record my voice** (pick microp
 4. **Slides without notes** (with "use the notes"): **AI writes it from the slide content** (only those slides' titles and text are sent) or **Leave empty, I'll fill it in** (fully offline; add the narration in the editor later)
 5. **Level of detail:** brief (1–2 sentences per slide) / standard (2–4) / detailed (4–7) — only for slides the AI writes
 6. Choose the narration language and voice (can differ from the deck's language) and create
+7. **Generate all right after importing** (off by default): when on, the voice-over and the video are made as soon as the import is done, as if you clicked **⚡ Generate all** right after it — one click from the deck to the finished video. The narration is written as chosen above (slides you left empty stay empty); the editor opens and shows the progress, and **Stop** works as usual. It keeps running on the server if you close the browser. If the narration couldn't be written (no AI configured, an AI error), the project is still created but nothing is generated, and you are told why
 
 > **PDFs have no speaker notes** (PowerPoint drops them when saving as PDF), so a PDF can only be narrated by the AI from the slide content. Import the `.pptx` / `.ppt` to use your notes. Notes from Google Slides / Keynote exports are read too.
 

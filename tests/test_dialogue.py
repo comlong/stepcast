@@ -206,6 +206,19 @@ check("AI 改写整段对话，名字和前缀去掉", r.status_code == 200 and 
       and "小王" not in FakeLLM.calls[-1][1] and "张老师" not in FakeLLM.calls[-1][1], (r.text[:200], st.narration))
 md = c.get(f"/api/projects/{proj.id}/export/markdown").text
 check("导出文档：名字：台词", "**小王**：改写后的问题？" in md and "**张老师**：改写后的回答。" in md, md[:300])
+import io as _io  # noqa: E402
+import re as _re  # noqa: E402
+import zipfile as _zipfile  # noqa: E402
+rz = c.get(f"/api/projects/{proj.id}/export/markdown.zip")
+zf = _zipfile.ZipFile(_io.BytesIO(rz.content)) if rz.status_code == 200 else None
+names = zf.namelist() if zf else []
+mdz = zf.read([n for n in names if n.endswith(".md")][0]).decode("utf-8") if zf else ""
+refs = _re.findall(r"!\[[^\]]*\]\(([^)]+)\)", mdz)
+check("导出图文文档（zip）：一份 Markdown 加 images 文件夹，下载时是附件", rz.status_code == 200 and "attachment" in rz.headers.get("content-disposition", "")
+      and sum(n.endswith(".md") for n in names) == 1 and any(n.startswith("images/") for n in names), (rz.status_code, names[:4]))
+check("zip 里的文档用相对路径引用图片，而且每张都在 zip 里（换台电脑、不开 StepCast 也能看）",
+      refs and all(r.startswith("images/") and r in names for r in refs) and "127.0.0.1" not in mdz, refs[:3])
+check("zip 里的文字和文本版一样（只有图片链接不同）", _re.sub(r"\]\([^)]+\)", "]", mdz) == _re.sub(r"\]\([^)]+\)", "]", md))
 js = c.get(f"/api/projects/{proj.id}/export/script").json()
 check("导出脚本带台词", js["steps"][0]["lines"][0]["who"] == "host")
 js["steps"][0]["lines"] = [{"who": "expert", "text": "导入的台词。"}]
