@@ -281,6 +281,13 @@ px = anim([0, 1]).compose(4.5).getpixel((50, 50))
 mix = tuple(int(240 + (TEXT[i] - 240) * R.FOCUS_ALPHA) for i in range(3))
 check("底板上有文字的话：前面的文字变暗（往背景色拉），仍不透明，底板透不出来", near(px, mix, 6) and not near(px, PLATE, 40), (px, mix))
 check("状态键随之变化，不会把不同的画面当成同一帧", anim([0]).key(4.5) != anim([0]).key(2.0) and anim([0]).key(4.5) == anim([0]).key(5.0))
+# an icon (no words) comes in one step before its own line of text: the text taking the focus must not darken the icon
+icon_l = (Image.new("RGBA", (40, 40), PLATE + (255,)), 140, 30)
+icon = R.TimelineAnim(canvas, [icon_l, text_l], starts=[1.0, 3.0], exits=[None, None], beats=[0, 1], looks=[R.Look(), R.Look()],
+                      media=[False, False], beat_times={0: 1.0, 1: 3.0}, duration=8.0, rise=0.0, focus=True, talk_beats=[0, 1], dims=[False, True])
+px = icon.compose(4.5).getpixel((160, 50))
+check("没有字的层（图标、图片、卡片、柱子）不变暗：后面的文字来了，图标照样", near(px, PLATE, 5), px)
+check("项目里的层：有字的才变暗（底板「第二部分底板」、文字、「闪现」有字；底色、标签没有）", ra.dims == [False, True, True, False, True], ra.dims)
 
 
 print("\n== 6. 擦除、飞入：只露出一部分 / 从边上滑进来 ==")

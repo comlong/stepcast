@@ -21,7 +21,7 @@ A local tutorial video generator: the Chrome extension records browser actions, 
 ## Running
 
 - `setup.bat` creates `.venv` and installs dependencies; `run.bat` → `app.py` → FastAPI at `http://127.0.0.1:8756`.
-- Restarting run.bat (when asked): stop the process listening on 8756, and its parent if that is the cmd window running run.bat; then from the project folder run `Start-Process cmd.exe -ArgumentList '/c', "$PWD\run.bat" -WorkingDirectory $PWD` (opens a new window).
+- Restarting run.bat (when asked): stop the process listening on 8756, and its parent if that is the cmd window running run.bat; then from the project folder run `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "cmd.exe /c `"$PWD\run.bat`""; CurrentDirectory = "$PWD" }` (opens a new window). Not `Start-Process`: a process started from the agent's shell sits in the agent's job object and is killed with it when the agent's environment is cleaned up — the server once vanished mid-render that way.
 
 ## GitHub
 

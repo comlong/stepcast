@@ -35,7 +35,9 @@ async function api(path, opts = {}) {
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail || detail; } catch (e) { /* */ }
-    throw new Error(detail);
+    const err = new Error(detail);
+    err.status = res.status;
+    throw err;
   }
   const ct = res.headers.get('content-type') || '';
   return ct.includes('json') ? res.json() : res.text();
@@ -78,7 +80,7 @@ async function loadHealth() {
     $('#badgeAI').textContent = `${shortName(ai.name)} ${ai.configured ? '✓' : '✗'}`;
     $('#badgeAI').className = 'badge ' + (ai.configured ? 'ok' : 'bad');
     $('#badgeAI').title = ai.configured ? t('模型：{model}', { model: ai.model }) : t('还没配好 AI 模型：右上角 ⚙ 设置 → AI 与语音');
-    $('#aboutInfo').textContent = t('数据目录：{dir}　ffmpeg：{ffmpeg}', { dir: h.data_dir, ffmpeg: h.ffmpeg.path || t('未找到') });
+    $('#aboutInfo').textContent = t('版本 {version}', { version: h.version });
   } catch (e) { toast(t('无法连接本地服务：{error}', { error: e.message }), true); }
 }
 
@@ -1071,9 +1073,30 @@ function pollJobInner(jobId, label, refresh, onTick) {
   S.jobActive = true;
   busy(true);
   return new Promise((resolve) => {
+    let last = 0, fails = 0;
     const tick = async () => {
       let j;
-      try { j = await api('/api/jobs/' + jobId); } catch (e) { setTimeout(tick, 1500); return; }
+      try {
+        j = await api('/api/jobs/' + jobId);
+      } catch (e) {
+        if (e.status === 404) {
+          // the local service was started again meanwhile: the job it was running is gone
+          setProgress(0, t('{label}中断了：本地服务重新启动过。请再点一次', { label }));
+          toast(t('{label}中断了：本地服务重新启动过。请再点一次', { label }), true);
+          if (refresh && S.project) await refreshProject().catch(() => null);
+          resolve(null);
+          return;
+        }
+        // the service doesn't answer (closed, or it stopped): say so instead of a progress bar that silently stands still
+        if (++fails === 3) {
+          setProgress(last, t('连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次'));
+          toast(t('连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次'), true);
+        }
+        setTimeout(tick, 1500);
+        return;
+      }
+      fails = 0;
+      last = j.progress;
       setProgress(j.progress, j.message);
       if (onTick) onTick(j);
       if (j.status === 'running' || j.status === 'pending') { setTimeout(tick, 900); return; }

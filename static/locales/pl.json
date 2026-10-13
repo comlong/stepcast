@@ -403,7 +403,7 @@
   "教程名称": "Nazwa samouczka",
   "教程名称（可留空）": "Nazwa samouczka (opcjonalnie)",
   "数据区域": "Region danych",
-  "数据目录：{dir}　ffmpeg：{ffmpeg}": "Folder danych: {dir} · ffmpeg: {ffmpeg}",
+  "版本 {version}": "Wersja {version}",
   "整理录音…": "Przygotowywanie nagrania…",
   "文件不存在": "Nie znaleziono pliku",
   "文件太大（最多 {mb} MB）": "Plik jest za duży (maks. {mb} MB)",
@@ -432,7 +432,6 @@
   "未命名教程": "Samouczek bez nazwy",
   "未安装语音识别组件，请执行：pip install faster-whisper": "Rozpoznawanie mowy nie jest zainstalowane. Uruchom: pip install faster-whisper",
   "未安装语音识别组件：pip install faster-whisper": "Rozpoznawanie mowy nie jest zainstalowane: pip install faster-whisper",
-  "未找到": "nie znaleziono",
   "未找到 ffmpeg。请安装后重试：winget install Gyan.FFmpeg\n或执行 pip install imageio-ffmpeg 使用内置版本。原因：{error}": "Nie znaleziono ffmpeg. Zainstaluj go i spróbuj ponownie: winget install Gyan.FFmpeg\nlub uruchom pip install imageio-ffmpeg, aby użyć wersji wbudowanej. Przyczyna: {error}",
   "未检测到 PowerPoint：PDF 可以正常导入；PPTX 会用简版文字页代替画面（建议先在 PowerPoint / WPS 里另存为 PDF）": "Nie wykryto PowerPointa: PDF importuje się normalnie; slajdy PPTX zostaną zastąpione prostymi stronami tekstowymi (wskazówka: najpierw zapisz jako PDF w PowerPoint / WPS)",
   "未知文件类型": "Nieznany typ pliku",
@@ -809,5 +808,7 @@
   "📊 从 PPT / PDF 创建": "📊 Utwórz z PPT / PDF",
   "📊 从 PPT / PDF 创建视频": "📊 Utwórz film z PPT / PDF",
   "🔊 试听": "🔊 Odsłuchaj",
-  "🔒 打码": "🔒 Ukryj"
+  "🔒 打码": "🔒 Ukryj",
+  "{label}中断了：本地服务重新启动过。请再点一次": "{label} – przerwano: lokalna usługa została uruchomiona ponownie. Kliknij jeszcze raz",
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Brak połączenia z lokalną usługą – StepCast mógł zostać zamknięty. Uruchom StepCast ponownie i kliknij jeszcze raz"
 }

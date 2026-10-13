@@ -1,6 +1,6 @@
 """Slides with the author's animations, with the local PowerPoint: a deck is built and animated by PowerPoint itself (click / with previous / after previous,
 a build by paragraph, an exit, a video followed by callouts, a card that comes in behind text that is already there, a wipe from the top, a fly-in from a
-corner, a dot that appears and then moves along a path), imported, voiced and rendered.
+corner, a dot that appears and then moves along a path, a glow hidden again on the next click), imported, voiced and rendered.
 
 Starts PowerPoint, so it only runs while PowerPoint isn't open (run_all.py --ppt checks first) and quits only the instance it started."""
 import os
@@ -149,6 +149,31 @@ def build_deck():
         q4.AddEffect(dot, 1, 0, 1)                                          # the dot appears on a click …
         mv = q4.AddEffect(dot, 149, 0, 3)                                   # … then moves right along a straight path (msoAnimEffectPathRight)
         mv.Timing.Duration = 2.0
+
+        s5 = pres.Slides.AddSlide(5, blank)
+        q5 = s5.TimeLine.MainSequence
+        shape(s5, 1, 0, 0, 960, 540, PANEL, name="bg5")
+        lamp = shape(s5, 1, 80, 80, 300, 120, CARD, "Garden bench", "lamp")
+        glow = shape(s5, 9, 560, 100, 120, 120, BADGE, name="glow")
+        dark = shape(s5, 1, 80, 300, 300, 120, CALL_B, "River bridge", "dark")
+        q5.AddEffect(lamp, 10, 0, 1)
+        q5.AddEffect(glow, 10, 0, 2)
+        # "after animation: hide on next click" (a glow that lights up for one step only): only the old AnimationSettings interface can set
+        # it (3), and doing so rewrites the effects of the slide, so their kind and trigger are set again afterwards
+        glow.AnimationSettings.AfterEffect = 3
+        for k in range(1, q5.Count + 1):
+            ef = q5.Item(k)
+            ef.EffectType = 10
+            ef.Timing.TriggerType = 2 if ef.Shape.Name == "glow" else 1
+        # a photo with its caption, grouped, coming in with the first step: a picture keeps its look when the next step takes the focus
+        Image.new("RGB", (160, 100), YELLOW).save(SP / "anim_photo.png")
+        photo = s5.Shapes.AddPicture(str((SP / "anim_photo.png").resolve()), False, True, 600, 300, 160, 100)
+        cap = s5.Shapes.AddTextbox(1, 600, 410, 200, 40)
+        cap.TextFrame2.TextRange.Text = "Sample photo"
+        car = s5.Shapes.Range([photo.Name, cap.Name]).Group()
+        car.Name = "car"
+        q5.AddEffect(car, 10, 0, 2)
+        q5.AddEffect(dark, 10, 0, 1)
         pres.SaveAs(str(DECK.resolve()))
         pres.Close()
     finally:
@@ -177,10 +202,11 @@ check("导入成功", r["status"] == "done", r.get("error"))
 pid = r["result"]["project_id"]
 p = c.get(f"/api/projects/{pid}").json()
 kinds = [s["kind"] for s in p["steps"]]
-check("四页 + 一个视频步骤", kinds == ["slide", "slide", "video", "slide", "slide"], kinds)
-s1, s2, v2, s3, s4 = p["steps"]
-rv1, rv2, rv3, rv4 = s1["reveal"], s2["reveal"], s3["reveal"], s4["reveal"]
-check("四页都是按动画拆的", all(rv and rv["mode"] == "timeline" for rv in (rv1, rv2, rv3, rv4)), [rv and rv["mode"] for rv in (rv1, rv2, rv3, rv4)])
+check("五页 + 一个视频步骤", kinds == ["slide", "slide", "video", "slide", "slide", "slide"], kinds)
+s1, s2, v2, s3, s4, s5 = p["steps"]
+rv1, rv2, rv3, rv4, rv5 = s1["reveal"], s2["reveal"], s3["reveal"], s4["reveal"], s5["reveal"]
+check("五页都是按动画拆的", all(rv and rv["mode"] == "timeline" for rv in (rv1, rv2, rv3, rv4, rv5)),
+      [rv and rv["mode"] for rv in (rv1, rv2, rv3, rv4, rv5)])
 check("封面规则不影响有动画的页：都启用逐条出现", all(rv["enabled"] for rv in (rv1, rv2, rv3)))
 beats1 = sorted({it["beat"] for it in rv1["items"] if it["beat"] >= 0})
 check("第 1 页五步：卡片组、三个要点步骤（子要点同一步）、会消失的提示", beats1 == [0, 1, 2, 3, 4], beats1)
@@ -207,10 +233,17 @@ check("飞入读出了「从左上角」", t4["Flown in"]["anim"] == "fly" and t
 check("光点：「出现」+ 同一步里接着沿路径右移 2 秒", len(dot4) == 1 and dot4[0]["anim"] == "appear" and dot4[0]["motion_beat"] == dot4[0]["beat"] == 2
       and abs(dot4[0]["motion_dur"] - 2.0) < 0.01 and R.parse_path(dot4[0]["motion_path"])[-1][0] > 0.2, dot4 and {k: dot4[0][k] for k in ("anim", "beat",
       "motion_beat", "motion_dur", "motion_path")})
+t5 = {it["text"]: it for it in rv5["items"] if it["text"]}
+glow5 = [it for it in rv5["items"] if it["beat"] == 0 and not it["text"]]
+check("第 5 页：「下次单击后隐藏」的光晕和第 1 步一起出现，第 2 步一开始就消失；文字不消失",
+      len(glow5) == 1 and glow5[0]["exit_beat"] == 1 and abs(glow5[0]["exit_offset"]) < 0.01 and t5["Garden bench"]["exit_beat"] == -1
+      and t5["River bridge"]["beat"] == 1, (glow5 and (glow5[0]["beat"], glow5[0]["exit_beat"], glow5[0]["exit_offset"]), {k: (v["beat"], v["exit_beat"]) for k, v in t5.items()}))
+check("照片和说明文字编成一组：记下「是图片」；文字卡片不是", t5.get("Sample photo", {}).get("picture") is True and t5["Sample photo"]["beat"] == 0
+      and t5["Garden bench"]["picture"] is False, {k: v.get("picture") for k, v in t5.items()})
 
 print("\n== 3. 把所有层按 PPT 的上下顺序叠回去，和 PowerPoint 导出的整页一样 ==")
 shots = storage.screenshots_dir(pid)
-for n, s in ((1, s1), (2, s2), (3, s3), (4, s4)):
+for n, s in ((1, s1), (2, s2), (3, s3), (4, s4), (5, s5)):
     pv = Image.open(__import__("io").BytesIO(c.get(f"/api/projects/{pid}/steps/{s['id']}/preview?scale=1&t=0.5").content)).convert("RGB")
     ref = Image.open(shots / s["screenshot"]).convert("RGB")
     # the preview is the page drawn into the video frame: compare the page area only
@@ -229,6 +262,7 @@ NARR = {
     s2["id"]: ("Callout A says one thing. Callout B says another.", ["Callout A says one thing.", "Callout B says another."]),
     s3["id"]: ("First the Hello text. Then its yellow card.", ["First the Hello text.", "Then its yellow card."]),
     s4["id"]: ("First the wiped in card. Then the flown in card. Then the dot.", ["First the wiped in card.", "Then the flown in card.", "Then the dot."]),
+    s5["id"]: ("First the garden bench. Then the river bridge.", ["First the garden bench.", "Then the river bridge."]),
 }
 sent_len = 2.0
 
@@ -354,6 +388,18 @@ v, _ = frame_px(base4 + b4[2] + 0.2, P4)
 check("光点先出现在原位置", near(v["dot_start"], BADGE) and near(v["dot_end"], PANEL), v)
 v, _ = frame_px(base4 + b4[2] + 2.5, P4)
 check("2 秒后光点沿路径移到了右边，原位置空了", near(v["dot_end"], BADGE) and near(v["dot_start"], PANEL), v)
+
+st5 = next(s for s in pj.steps if s.id == s5["id"])
+b5 = renderer_of(st5).reveal.beat_times
+base5 = starts[s5["id"]]
+P5 = {"glow": page_point(st5, 620, 160), "dark": page_point(st5, 100, 310), "photo": page_point(st5, 680, 350), "lamp": page_point(st5, 100, 90)}
+v, _ = frame_px(base5 + b5[0] + 0.9, P5)
+check("第 5 页：第 1 步光晕亮着", near(v["glow"], BADGE) and near(v["dark"], PANEL), v)
+v, _ = frame_px(base5 + b5[1] + 0.9, P5)
+check("第 2 步：光晕没了（像 PowerPoint 一样），新卡片在", near(v["glow"], PANEL) and near(v["dark"], CALL_B), v)
+lamp_dim = tuple(int(PANEL[i] + (CARD[i] - PANEL[i]) * R.FOCUS_ALPHA) for i in range(3))
+check("第 2 步：上一步的文字卡片变暗，照片（连同说明文字）不变暗", near(v["photo"], YELLOW) and near(v["lamp"], lamp_dim, 30) and not near(v["lamp"], CARD, 30),
+      (v, lamp_dim))
 
 print("\n== 5. 没有 PowerPoint 动画的页仍然按位置分组 ==")
 with open(SP / "fx" / "bullets.pptx", "rb") as f:

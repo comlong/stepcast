@@ -456,7 +456,7 @@ def synth_project(
 
 # A full stop ends a sentence only when nothing glues it to the next word: a space after it, or a capital letter / Chinese character directly
 # after it ("chapter.Nova"). Not inside a number or a name ("5.7 kg", "v1.8.1", "example.com"), or a subtitle would turn the page at "5."
-_SENT_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|(?<=\.)\s+|(?<=\.[\"'”’」』）)\]])\s+|(?<=\.)(?=[A-Z一-鿿])")
+_SENT_SPLIT = re.compile(r"(?<=[。！？!?；;])\s*|(?<=\.)\s+|(?<=\.[\"'”’」』）)\]])\s+|(?<=\.)(?=[A-Z一-鿿])")  # i18n: ignore
 
 
 def _in_token(ch: str) -> bool:

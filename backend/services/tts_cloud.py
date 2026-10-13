@@ -85,7 +85,7 @@ def in_china() -> bool:
     import time
     try:
         names = " ".join(time.tzname)
-        if not (time.timezone == -8 * 3600 and not time.daylight and ("China" in names or "中国" in names)):
+        if not (time.timezone == -8 * 3600 and not time.daylight and ("China" in names or "中国" in names)):  # i18n: ignore
             return False
     except Exception:
         return False

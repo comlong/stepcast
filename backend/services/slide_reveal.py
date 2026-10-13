@@ -1014,14 +1014,18 @@ class TimelineAnim:
     The layers are drawn in PowerPoint's own z-order, back first, every time: a card that comes in later still lies behind the text that is
     already there, and an element that is always there but lies above an animated one stays above it. Each layer has the time it comes in
     (0 = there from the start), the way it comes in (appear / fade / wipe / fly), a motion path if the author gave it one, and, if it has an
-    exit, the time it goes out. The earlier steps are dimmed when the next one comes (focus) - by taking their colours towards the background,
-    never by making them see-through: a see-through card would let the card lying behind it shine through and look as if the order was wrong."""
+    exit, the time it goes out. The text of earlier steps is dimmed when the next one comes (focus) - by taking its colours towards the background,
+    never by making it see-through: a see-through card would let the card lying behind it shine through and look as if the order was wrong.
+    Only layers with words dim (`dims`): pictures (also a photo with its caption), cards, icons, bars keep their look, as the author made them
+    (an icon coming in just before its own line of text would otherwise go dark the moment that text appears)."""
 
     def __init__(self, base: Image.Image, layers: List[Tuple[Image.Image, int, int]], starts: List[float], exits: List[Optional[float]],
                  beats: List[int], looks: List[Look], media: List[bool], beat_times: Dict[int, float], duration: float,
                  rise: float, focus: bool, under: Optional[List[Tuple[Image.Image, Tuple[int, int, int, int]]]] = None,
-                 talk_beats: Optional[Sequence[int]] = None, bounds: Optional[Tuple[int, int, int, int]] = None):
+                 talk_beats: Optional[Sequence[int]] = None, bounds: Optional[Tuple[int, int, int, int]] = None,
+                 dims: Optional[List[bool]] = None):
         self.layers, self.starts, self.exits, self.beats = layers, starts, exits, beats
+        self.dims = dims if dims is not None else [True] * len(layers)
         self.times = starts                              # the name RevealAnim uses
         self.looks, self.media, self.beat_times = looks, media, beat_times
         # only a step that has something to say takes the focus (earlier ones dim); a card or picture coming in behind the text doesn't
@@ -1170,7 +1174,7 @@ class TimelineAnim:
                 if a <= 0:
                     continue
             src = None
-            if self.focus and s > 0 and 0 <= self.beats[k] < cur and not self.media[k]:
+            if self.focus and s > 0 and 0 <= self.beats[k] < cur and not self.media[k] and self.dims[k]:
                 dim = ease_out_cubic(min(1.0, (t - self.focus_times[cur]) / DIM))
                 vis = 1 - (1 - FOCUS_ALPHA) * dim
                 if self.restore_at is not None and t >= self.restore_at:
@@ -1259,7 +1263,7 @@ def _build_timeline(rend, shots_dir: Path) -> Optional[TimelineAnim]:
     times = [min(t, latest) for t in times]
     beat_times = {b: lead + t for b, t in zip(sel, times)}
     sw, sh = x1 - x0, _y1 - y0
-    starts, exits, beats, looks, media, kept = [], [], [], [], [], []
+    starts, exits, beats, looks, media, dims, kept = [], [], [], [], [], [], []
     for k, it in enumerate(rv.items):
         if video_first and not revealed(it) and it.exit_beat >= 0 and it.exit_beat not in beat_times:
             continue                                      # it has already gone out again by the time the video has played
@@ -1276,6 +1280,7 @@ def _build_timeline(rend, shots_dir: Path) -> Optional[TimelineAnim]:
                 motion = Motion(mt + min(max(0.0, it.motion_offset), OFFSET_CAP), it.motion_dur, pts, it.motion_accel, it.motion_decel)
         looks.append(Look(it.anim, min(max(it.dur, 0.0), 2.0), it.side, motion))
         media.append(it.media)
+        dims.append(slide_timeline.has_words(it.text) and not it.picture)
         kept.append(k)
     layers = [layers[k] for k in kept]
     saved = rend.shot
@@ -1287,4 +1292,4 @@ def _build_timeline(rend, shots_dir: Path) -> Optional[TimelineAnim]:
     return TimelineAnim(clean_stage, layers, starts, exits, beats, looks, media, beat_times, rend.duration,
                         rise=14 * rend.H / 1080, focus=focus and len(sel) >= 2,
                         under=getattr(rend, "video_under", None) if video_first else None,
-                        talk_beats=[sel[i] for i in talk], bounds=(x0, y0, x1, _y1))
+                        talk_beats=[sel[i] for i in talk], bounds=(x0, y0, x1, _y1), dims=dims)

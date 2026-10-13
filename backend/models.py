@@ -95,6 +95,7 @@ class RevealItem(BaseModel):
     motion_path: str = ""     # as PowerPoint writes it: "M 0 0 L 0.47 0.62 E" (fractions of the slide)
     motion_accel: float = 0.0
     motion_decel: float = 0.0
+    picture: bool = False     # a picture is in it (a photo, or a group / shape holding one): it keeps its look when later steps take the focus
 
 
 class SlideReveal(BaseModel):

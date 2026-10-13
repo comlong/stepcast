@@ -491,7 +491,8 @@ def _attach_reveal(proj: Project, step: Step, meta: Dict[str, Any], src: Path) -
         name = f"{step.id}_r{k:02d}.png"
         shutil.copyfile(src / it["file"], shots / name)
         timing = {f: it[f] for f in ("beat", "offset", "anim", "exit_beat", "exit_offset", "after_media", "media", "dur", "side",
-                                      "motion_beat", "motion_offset", "motion_dur", "motion_path", "motion_accel", "motion_decel") if f in it}
+                                      "motion_beat", "motion_offset", "motion_dur", "motion_path", "motion_accel", "motion_decel", "picture")
+                  if f in it}
         items.append(RevealItem(file=name, x=int(it["x"]), y=int(it["y"]), text=it.get("text", ""), **timing))
     return SlideReveal(clean=clean, items=items, mode=meta.get("mode", ""))
 

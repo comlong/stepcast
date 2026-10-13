@@ -7,17 +7,19 @@ How PowerPoint animates (read back from files PowerPoint wrote, and through its 
 - Trigger "on click" starts a new click group. "With previous" starts together with the effect before it, "after previous" starts when the
   effects before it have finished. Delays are counted from there. That is the whole timing model: see `schedule`.
 - Whatever has no entrance effect is simply there from the start (a card behind the text, a title, a picture) and stays where it is.
-  Things with an entrance effect are hidden at the start; things with an exit effect disappear later.
+  Things with an entrance effect are hidden at the start; things with an exit effect disappear later. An effect can also say what happens
+  "after animation": hide the element right away, or at the next click (a glow that lights up for one step only) - that is an exit too.
 - A video is played by an effect of its own (its duration is the length of the clip); effects "after previous" start after it has ended.
 - A motion path moves an element along a line or curve (a light spot sliding across the picture); it has its own start and duration like any effect.
 
 For a video the narration decides when a click happens, so each click group becomes one *beat* that is lined up with the narration
 (slide_reveal.plan); inside a beat the effects keep PowerPoint's own offsets. Slides with no clicks at all run by themselves in PowerPoint;
-there each "after previous" step is a beat. Every shape (or paragraph) becomes a layer; layers are drawn in PowerPoint's own z-order, so
+there each "after previous" step is a beat - and so it is in a click that sets off a chain of steps with text of their own (see `chains`). Every shape (or paragraph) becomes a layer; layers are drawn in PowerPoint's own z-order, so
 a card that comes in later still lies behind the text that is already there.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
@@ -29,6 +31,9 @@ MEDIA_PLAY = 83                       # msoAnimEffectMediaPlay
 MAX_LAYERS = 40                       # more layers than this: the slide is too fragmented, fall back to grouping by position
 APPEAR, FLY, WIPE = 1, 2, 22          # msoAnimEffectAppear / Fly / Wipe; every other entrance fades in
 INSTANT = 0.05                        # an entrance this short (seconds) is just there, whatever its name
+HIDE, HIDE_NEXT_CLICK = 2, 3          # "after animation" (msoAnimAfterEffectHide / HideOnNextClick); 1 = dim to a colour, not reproduced
+# words to talk about: two letters in a row (any script) or one CJK / kana / hangul character; a number or a badge "1" is only a label
+_WORDS = re.compile(r"[^\W\d_]{2,}|[぀-ヿ㐀-鿿가-힯]")  # i18n: ignore
 
 
 def classify(etype: int, exit_: bool) -> str:
@@ -59,6 +64,7 @@ class Effect:
     path: str = ""                # a motion path as PowerPoint writes it ("M 0 0 L 0.47 0.62 E": fractions of the slide)
     accel: float = 0.0            # part of the duration spent speeding up / slowing down (0..1)
     decel: float = 0.0
+    after: int = 0                # "after animation" (PowerPoint's AfterEffect): HIDE / HIDE_NEXT_CLICK take the element away again
 
 
 @dataclass
@@ -67,6 +73,7 @@ class ShapeInfo:
     paras: List[str] = field(default_factory=list)    # text of each paragraph (index 0 = paragraph 1)
     media: bool = False
     visible: bool = True
+    picture: bool = False         # a photo or picture is in it (also a group holding one, or a shape filled with one)
 
 
 @dataclass
@@ -111,6 +118,7 @@ class Layer:
     dur: float = 0.5                                   # how long coming in takes
     side: str = ""                                     # the side a wipe / fly starts from
     motion: Optional[Tuple[int, float, float, str, float, float]] = None    # (beat, offset, duration, path, accel, decel)
+    picture: bool = False                              # a picture is in it (see ShapeInfo)
 
     @property
     def animated(self) -> bool:
@@ -136,6 +144,25 @@ class Analysis:
         return ["\n".join(texts[b]) for b in sorted(texts)]
 
 
+def has_words(text: str) -> bool:
+    """Whether a text has words to talk about (not only a number or a badge "1")."""
+    return bool(_WORDS.search(text or ""))
+
+
+def chains(content: Sequence[Timed], shapes: Sequence[ShapeInfo]) -> Set[int]:
+    """Click groups that set off a chain of "after previous" steps, two or more of them bringing in words of their own (callouts coming one
+    after another). The author clicks once to start the chain, so such a group plays like a slide without clicks: each step is a beat and
+    each callout comes when the narration gets to it. A click whose later steps only finish what it started (a bar, then its value; a card,
+    then its number badge) stays one beat."""
+    steps: Dict[int, Set[int]] = {}
+    for t in content:
+        info, p = shapes[t.effect.shape], t.effect.para
+        text = info.paras[p - 1] if 0 < p <= len(info.paras) else info.text
+        if t.kind == "in" and has_words(text):
+            steps.setdefault(t.group, set()).add(t.tgroup)
+    return {g for g, s in steps.items() if len(s) >= 2}
+
+
 def analyze(effects: Sequence[Effect], shapes: Sequence[ShapeInfo]) -> Optional[Analysis]:
     """Layers and beats of a slide, or None when it has nothing worth revealing (no entrance animation)."""
     effects = [e for e in effects if 0 <= e.shape < len(shapes)]
@@ -144,9 +171,10 @@ def analyze(effects: Sequence[Effect], shapes: Sequence[ShapeInfo]) -> Optional[
     if not any(t.kind == "in" for t in content):
         return None
     clicks = any(t.effect.trigger == CLICK for t in timed)
+    chained = chains(content, shapes)
 
     def key(t: Timed) -> Tuple[int, int]:
-        return (t.group, 0 if clicks else t.tgroup)
+        return (t.group, t.tgroup if not clicks or t.group in chained else 0)
 
     # beats: the click groups (or, without clicks, the steps); a step that only makes things disappear goes with the next one that makes something appear
     keys: List[Tuple[int, int]] = []
@@ -173,6 +201,21 @@ def analyze(effects: Sequence[Effect], shapes: Sequence[ShapeInfo]) -> Optional[
             return beat_no[tk], max(0.0, t.start - base[tk])
         same_group = k[0] == tk[0]
         return beat_no[tk], max(0.0, t.start - (base[tk] if same_group else own_base[k]))
+
+    def hidden(ts: Sequence[Timed]) -> Optional[Tuple[int, float]]:
+        """When "after animation: hide" takes an element away again (the last of its effects that says so): as soon as that effect has
+        ended, or at the next click. A slide without clicks has no next click before the slide ends, and a click that brings nothing new
+        (no later step) is not one the narration has: the element then stays."""
+        t = next((t for t in reversed(ts) if t.effect.after in (HIDE, HIDE_NEXT_CLICK)), None)
+        if t is None:
+            return None
+        b, off = place(t)
+        if t.effect.after == HIDE:
+            return b, off + max(0.0, t.effect.dur)
+        nxt = next((k for k in keys if k[0] > t.group), None) if clicks else None
+        if nxt is None or beat_no[target[nxt]] <= b:
+            return None
+        return beat_no[target[nxt]], 0.0
 
     # the video: effects that start after it has ended appear after the video
     last_media = None
@@ -211,8 +254,12 @@ def analyze(effects: Sequence[Effect], shapes: Sequence[ShapeInfo]) -> Optional[
         paths = [t for t in mine if t.kind == "path" and not t.effect.para and t.effect.path]
         by_para = any(t.effect.para for t in mine if t.kind != "path")
         if not by_para:
-            layers.append(_layer([s], None, info.text, ins[0] if ins else None, outs[0] if outs else None,
-                                 place, after_media, index, info.media, paths[0] if paths else None))
+            ly = _layer([s], None, info.text, ins[0] if ins else None, outs[0] if outs else None,
+                        place, after_media, index, info.media, paths[0] if paths else None)
+            if ly.exit is None:
+                ly.exit = hidden(mine)
+            ly.picture = info.picture
+            layers.append(ly)
             continue
         # a build by paragraph: the shape itself (fill, outline), then a layer for each animated paragraph, then the rest of the text
         first_in = min(ins, key=lambda t: (t.group, t.start)) if ins else None
@@ -226,7 +273,10 @@ def analyze(effects: Sequence[Effect], shapes: Sequence[ShapeInfo]) -> Optional[
             pin = next((t for t in ins if t.effect.para == p), None)
             pout = next((t for t in outs if t.effect.para == p), None)
             txt = info.paras[p - 1] if p <= len(info.paras) else ""
-            layers.append(_layer([s], [p], txt, pin, pout, place, after_media, index, False))
+            ly = _layer([s], [p], txt, pin, pout, place, after_media, index, False)
+            if ly.exit is None:
+                ly.exit = hidden([t for t in mine if t.effect.para == p])
+            layers.append(ly)
     flush()
     if len(layers) > MAX_LAYERS or sum(1 for ly in layers if ly.animated) == 0:
         return None
@@ -353,8 +403,23 @@ def read_shapes(slide) -> List[ShapeInfo]:
             media = int(sh.Type) == 16                   # msoMedia
         except Exception:
             media = False
-        out.append(ShapeInfo(text, paras, media, bool(sh.Visible)))
+        out.append(ShapeInfo(text, paras, media, bool(sh.Visible), _has_picture(sh)))
     return out
+
+
+def _has_picture(sh) -> bool:
+    """A photo or picture is in the shape: a picture, a placeholder holding one, a group holding one, or a shape filled with one."""
+    try:
+        kind = int(sh.Type)
+        if kind in (11, 13):                             # msoLinkedPicture / msoPicture
+            return True
+        if kind == 14 and int(sh.PlaceholderFormat.ContainedType) == 13:
+            return True
+        if kind == 6:                                    # msoGroup (its items are never groups themselves)
+            return any(_has_picture(sh.GroupItems(k)) for k in range(1, int(sh.GroupItems.Count) + 1))
+        return int(sh.Fill.Type) == 6                    # msoFillPicture
+    except Exception:
+        return False
 
 
 def _group_text(sh) -> str:
@@ -402,9 +467,13 @@ def read_effects(slide) -> List[Effect]:
                 background = int(ef.EffectInformation.AnimateBackground) != 0
             except Exception:
                 background = True
+            try:
+                after = int(ef.EffectInformation.AfterEffect)
+            except Exception:
+                after = 0
             t = ef.Timing
             out.append(Effect(idx, int(ef.EffectType), bool(ef.Exit), int(t.TriggerType), float(t.TriggerDelayTime),
-                              float(t.Duration), max(0, para), background, shape_id=int(ef.Shape.Id)))
+                              float(t.Duration), max(0, para), background, shape_id=int(ef.Shape.Id), after=after))
         except Exception:
             continue
     return out
@@ -541,7 +610,7 @@ def to_meta(a: Analysis) -> List[Dict[str, Any]]:
     out = []
     for ly in a.layers:
         d: Dict[str, Any] = {"text": ly.text, "media": ly.media, "after_media": ly.after_media, "beat": -1, "offset": 0.0,
-                             "anim": "fade", "exit_beat": -1, "exit_offset": 0.0, "dur": round(ly.dur, 3), "side": ly.side}
+                             "anim": "fade", "exit_beat": -1, "exit_offset": 0.0, "dur": round(ly.dur, 3), "side": ly.side, "picture": ly.picture}
         if ly.enter is not None:
             d["beat"], d["offset"], d["anim"] = ly.enter[0], round(ly.enter[1], 3), ly.enter[2]
         if ly.exit is not None:

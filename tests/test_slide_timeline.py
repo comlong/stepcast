@@ -271,4 +271,72 @@ for name, fn in cases.items():
 ib, iw = exports(lambda d, im: None)
 check("什么都没有：None", T.matte(ib, iw) is None and matte_full(ib, iw) is None)
 
+print("\n== 12. 「动画播放后」隐藏：亮一下就灭的光晕 ==")
+HN, HD = T.HIDE_NEXT_CLICK, T.HIDE
+# each click brings a line of text and, with it, a glow that is hidden again on the next click (one light after another)
+glow = [Effect(0, FADE, trigger=CLICK), Effect(1, WIPE_, trigger=CLICK), Effect(2, CIRCLE, trigger=WITH, dur=0.01, after=HN),
+        Effect(3, WIPE_, trigger=CLICK), Effect(4, CIRCLE, trigger=WITH, dur=0.25, after=HN), Effect(5, CIRCLE, trigger=WITH, dur=0.25, after=HN),
+        Effect(6, WIPE_, trigger=CLICK), Effect(7, CIRCLE, trigger=WITH, dur=0.01, after=HN)]
+a = T.analyze(glow, [ShapeInfo("Overview"), ShapeInfo("Point one"), ShapeInfo(""), ShapeInfo("Point two"), ShapeInfo(""), ShapeInfo(""),
+                     ShapeInfo("Point three"), ShapeInfo("")])
+ex = [ly.exit for ly in a.layers]
+check("每个光晕在下一次点击（下一步）一开始消失", ex[2] == (2, 0.0) and ex[4] == ex[5] == (3, 0.0), ex)
+check("最后一步的光晕后面没有点击了：留到这页结束", ex[7] is None, ex)
+check("文字不受影响，步骤数不变", [ex[k] for k in (0, 1, 3, 6)] == [None] * 4 and a.beats == 4, (ex, a.beats))
+meta = T.to_meta(a)
+check("存进项目：消失的步骤和时间", meta[2]["exit_beat"] == 2 and meta[2]["exit_offset"] == 0.0 and meta[7]["exit_beat"] == -1,
+      [(m["exit_beat"], m["exit_offset"]) for m in meta])
+a = T.analyze([Effect(1, FADE, trigger=CLICK), Effect(0, FADE, trigger=WITH, delay=0.5, dur=0.75, after=HD), Effect(2, FADE, trigger=CLICK)],
+              [ShapeInfo("flash"), ShapeInfo("b"), ShapeInfo("c")])
+check("「播放动画后隐藏」：效果一结束就消失（同一步，0.5 秒延迟 + 0.75 秒效果）", a.layers[0].exit == (0, 1.25) and a.layers[0].enter[:2] == (0, 0.5),
+      (a.layers[0].enter, a.layers[0].exit))
+a = T.analyze([Effect(0, FADE, trigger=AFTER, after=HN), Effect(1, FADE, trigger=AFTER)], [ShapeInfo("a"), ShapeInfo("b")])
+check("没有点击的页（自己跑）：没有「下次单击」，不消失", a.layers[0].exit is None, a.layers[0].exit)
+a = T.analyze([Effect(0, FADE, trigger=CLICK), Effect(1, FADE, trigger=CLICK, after=HN), Effect(0, FADE, exit=True, trigger=CLICK)],
+              [ShapeInfo("a"), ShapeInfo("b")])
+check("下一次点击只是让别的东西消失（并进前一步）：光晕不会在出现的同时就消失", a.layers[1].exit is None, a.layers[1].exit)
+a = T.analyze([Effect(0, FADE, trigger=CLICK, after=HN), Effect(0, FADE, exit=True, trigger=WITH, delay=1.0), Effect(1, FADE, trigger=CLICK)],
+              [ShapeInfo("a"), ShapeInfo("b")])
+check("自己有退出效果的：按退出效果", a.layers[0].exit == (0, 1.0), a.layers[0].exit)
+a = T.analyze([Effect(0, FADE, trigger=CLICK, para=1, after=HN), Effect(0, FADE, trigger=CLICK, para=2, after=HN), Effect(1, FADE, trigger=CLICK)],
+              [ShapeInfo("one\ntwo", paras=["one", "two"]), ShapeInfo("next")])
+pl = [(ly.paras, ly.exit) for ly in a.layers if ly.paras]
+check("按段落出现的：每段在下一次点击时消失", pl == [([1], (1, 0.0)), ([2], (2, 0.0))], pl)
+
+print("\n== 13. 点一次，后面一串「在上一项之后」的标注：像没有点击的页一样，每步一拍 ==")
+check("有字才算要讲的内容：数字、角标不算", [T.has_words(t) for t in ("Panel", "门", "12.5", "1", "4.2 s", "", "- SECTION -")]
+      == [True, True, False, False, False, False, True])
+# a photo with callouts: one click, then marker, callout, marker, callout … each "after previous"
+callouts = [Effect(0, FADE, trigger=CLICK), Effect(1, CIRCLE, trigger=AFTER, dur=0.25), Effect(2, FADE, trigger=AFTER),
+            Effect(3, CIRCLE, trigger=AFTER, dur=0.25), Effect(4, FADE, trigger=AFTER), Effect(5, CIRCLE, trigger=AFTER, dur=0.25)]
+cshapes = [ShapeInfo(""), ShapeInfo("- PART A - First detail"), ShapeInfo(""), ShapeInfo("- PART B - Second detail"),
+           ShapeInfo(""), ShapeInfo("- PART C - Third detail")]
+a = T.analyze(callouts, cshapes)
+check("六步六拍，按作者的顺序；每个标注在说到它时出现", a.beats == 6 and [ly.enter[:2] for ly in a.layers] == [(b, 0.0) for b in range(6)],
+      (a.beats, [ly.enter for ly in a.layers]))
+check("要讲的内容：三个标注，各自一拍", [t for t in a.beat_texts() if t] == [s.text for s in cshapes if s.text])
+same = [Effect(e.shape, e.etype, trigger=AFTER if k == 0 else e.trigger, dur=e.dur) for k, e in enumerate(callouts)]
+b = T.analyze(same, cshapes)
+check("和第一项是「在上一项之后」（没有点击）的同一页结果一样", [ly.enter for ly in b.layers] == [ly.enter for ly in a.layers])
+# a bar chart: each click brings a bar, then "after previous" its value - one beat each (a number is no talking point of its own)
+bars = [Effect(0, FLY, trigger=CLICK, dur=1.25), Effect(1, APPEAR, trigger=AFTER, dur=0.001),
+        Effect(2, FLY, trigger=CLICK, dur=1.25), Effect(3, APPEAR, trigger=AFTER, dur=0.001)]
+a = T.analyze(bars, [ShapeInfo(""), ShapeInfo("12.5"), ShapeInfo(""), ShapeInfo("9.1")])
+check("柱子，然后它的数值：每次点击仍是一拍，数值在柱子之后 1.25 秒", a.beats == 2 and [ly.enter[:2] for ly in a.layers] == [(0, 0.0), (0, 1.25), (1, 0.0), (1, 1.25)],
+      [ly.enter for ly in a.layers])
+# a chain that runs by itself when the slide comes, then one click brings a last card
+auto_then_click = [Effect(0, FADE, trigger=AFTER), Effect(1, FADE, trigger=AFTER), Effect(2, FADE, trigger=AFTER), Effect(3, FADE, trigger=AFTER),
+                   Effect(4, FLY, trigger=CLICK)]
+a = T.analyze(auto_then_click, [ShapeInfo(""), ShapeInfo("First feature"), ShapeInfo(""), ShapeInfo("Second feature"), ShapeInfo("Closing card")])
+check("自己跑的一串（四拍）+ 最后一次点击（第五拍）", a.beats == 5 and [ly.enter[0] for ly in a.layers] == [0, 1, 2, 3, 4], [ly.enter for ly in a.layers])
+two_clicks = [Effect(0, FADE, trigger=CLICK), Effect(1, FADE, trigger=AFTER), Effect(2, FADE, trigger=CLICK), Effect(3, FADE, trigger=WITH)]
+a = T.analyze(two_clicks, [ShapeInfo("Heading one"), ShapeInfo(""), ShapeInfo("Heading two"), ShapeInfo("more text")])
+check("一次点击后只有一步带字（另一步是它的卡片）：仍按点击分拍", a.beats == 2 and [ly.enter[0] for ly in a.layers] == [0, 0, 1, 1],
+      [ly.enter for ly in a.layers])
+a = T.analyze([Effect(0, FADE, trigger=CLICK), Effect(1, FADE, trigger=CLICK)], [ShapeInfo("Model A", picture=True), ShapeInfo("Model B")])
+meta = T.to_meta(a)
+check("带说明文字的照片记下「是图片」，存进项目（以后不变暗）", [ly.picture for ly in a.layers] == [True, False] and [m["picture"] for m in meta] == [True, False],
+      [m["picture"] for m in meta])
+check("以前导入的项目没有这一项：当作不是图片", RevealItem().picture is False)
+
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))
