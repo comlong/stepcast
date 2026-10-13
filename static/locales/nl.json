@@ -244,7 +244,7 @@
   "后台任务": "Achtergrondtaak",
   "听一下没问题就确认；不满意点「重录」": "Luister terug en bevestig, of klik op ‘Opnieuw opnemen’",
   "启动失败": "Starten mislukt",
-  "和默认的 Edge 免费语音是同一套声音，另有更自然的 HD 语音，有欧洲区域，每月有免费额度。在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。": "Dezelfde stemmen als de gratis standaard-Edge-spraak, plus natuurlijkere HD-stemmen, met Europese regio's en een gratis maandtegoed. Maak in de Azure-portal een ‘Speech’-resource aan, kopieer de sleutel en vul hieronder de regio van de resource in (in Europa meestal westeurope of northeurope).",
+  "和默认的 Edge 免费语音是同一套声音，另有更自然的 HD 语音，有欧洲区域，每月有免费额度。在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。在中国用世纪互联运营的 Azure（azure.cn）：区域填 chinaeast2、chinanorth2 或 chinanorth3，会自动连接中国版。": "Dezelfde stemmen als de gratis standaard-Edge-spraak, plus natuurlijkere HD-stemmen, met Europese regio's en een gratis maandtegoed. Maak in de Azure-portal een ‘Speech’-resource aan, kopieer de sleutel en vul hieronder de regio van de resource in (in Europa meestal westeurope of northeurope). Gebruik in China de Azure van 21Vianet (azure.cn): vul als regio chinaeast2, chinanorth2 of chinanorth3 in, dan wordt automatisch de Chinese cloud gebruikt.",
   "回放文件读不出来，请再试一次": "Het afspeelbestand kan niet worden gelezen, probeer het opnieuw",
   "回放这一页": "Deze dia afspelen",
   "图文文档（Markdown）": "Handleiding met afbeeldingen (Markdown)",

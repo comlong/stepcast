@@ -201,7 +201,7 @@ Key 保存在本机 `config.json`，界面和接口只显示掩码，不会上�
 | **通义语音（阿里云百炼 Qwen-TTS）** | 一个音色能说中文、英文等十种语言 | 和「AI 模型」里的通义千问同一个 Key |
 | **Google Gemini 语音** | 一个音色能说一百多种语言，共 30 个音色；可以用文字描述语气（**语气提示**）；两个模型（Flash TTS，或更便宜的 Flash-Lite TTS） | 和「AI 模型」里的 Google Gemini 同一个 Key；欧洲使用需要付费档（在 Google AI Studio 里绑定结算账号） |
 | **ElevenLabs** | 公认最自然、最有表现力，音色库很大，英语和欧洲语言尤其好；模型有 Multilingual v2 / v3 / Flash v2.5 | 网站 API Keys 页面创建；免费档每月 1 万字符 |
-| **微软 Azure 语音** | 和 Edge 免费语音是同一套声音，另有更自然的 HD 语音；有欧洲区域，每月有免费额度 | 在 Azure 门户创建「语音服务」资源，复制 Key，并在设置里填资源所在的区域（如 `westeurope`） |
+| **微软 Azure 语音** | 和 Edge 免费语音是同一套声音，另有更自然的 HD 语音；有欧洲区域，也能用中国版 Azure，每月有免费额度 | 在 Azure 门户创建「语音服务」资源，复制 Key，并在设置里填资源所在的区域（如 `westeurope`）。在中国用世纪互联运营的 Azure（portal.azure.cn），区域填 `chinaeast2`、`chinanorth2` 或 `chinanorth3`，StepCast 会自动连接中国版 |
 
 - 点「测试」合成一句试试 Key 对不对（不保存；会产生极少的费用）
 - 长段落按句子切成几段分别合成再拼起来，每段的时间用来对齐字幕和逐条出现
@@ -209,6 +209,7 @@ Key 保存在本机 `config.json`，界面和接口只显示掩码，不会上�
 - 配音文字会发给对应的公司；环境变量 `MODEL_SPEECH_API_KEY`（豆包）、`MINIMAX_API_KEY`、`DASHSCOPE_API_KEY`、`GEMINI_API_KEY`（或 `GOOGLE_API_KEY`）、`ELEVENLABS_API_KEY`（或 `XI_API_KEY`）、`AZURE_SPEECH_KEY` 也认
 - 这些服务都不返回逐词时间，所以长段落里的字幕和逐条出现是按分段（几句话一段）对齐的，不是逐词
 - **配音文字要留在欧洲**：选 Azure 的欧洲区域（如 `westeurope`），或者 ElevenLabs 的 **数据区域 → 欧盟**（要企业档）；Gemini 没有区域设置
+- **在中国**：世纪互联运营的 Azure 把文字留在它的中国区域；豆包、MiniMax、通义也都是国内服务。电脑在中国大陆时（Windows 时区是中国、「国家或地区」也是中国；香港、澳门和北京共用时区，但地区不同，不算），Azure 的区域和「去创建 Key」的链接默认就是中国版；具体连哪个 Azure，始终按你填的区域来
 >
 > 不配 Key 也能用：自己在编辑器里逐条写解说词，一样可以配音和出视频。
 

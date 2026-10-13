@@ -112,7 +112,7 @@ def fake_post(url, headers=None, json=None, timeout=None, stream=False, params=N
             MODE["eleven_429"] -= 1
             return Resp(429, {"detail": "too many concurrent requests"})
         return Resp(content=audio(secs_for(json["text"])), headers={"content-type": "audio/mpeg"})
-    if "tts.speech.microsoft.com/cognitiveservices/v1" in url:
+    if "tts.speech.microsoft.com/cognitiveservices/v1" in url or "tts.speech.azure.cn/cognitiveservices/v1" in url:
         if headers.get("Ocp-Apim-Subscription-Key") == "bad":
             return Resp(401, {})
         plain = html.unescape(re.sub(r"<[^>]+>", "", data.decode("utf-8")))
@@ -390,7 +390,8 @@ print("\n== 11. Azure：区域、SSML、语速、转义、音色列表 ==")
 c.post("/api/settings", headers=H, json={"tts_services": {"azure": {"api_key": "az-key-1234567890"}}})
 st = {x["id"]: x for x in c.get("/api/settings").json()["tts_services"]}
 fields = {f["key"]: f for f in st["azure"]["fields"]}
-check("区域默认 westeurope（欧洲），自由填写", fields["region"]["value"] == "westeurope" and fields["region"]["choices"] == [], fields)
+DEF = "chinaeast2" if tts_cloud.IN_CHINA else "westeurope"           # (the default follows where this computer is)
+check(f"区域默认 {DEF}（按电脑所在地猜），自由填写", fields["region"]["value"] == DEF and fields["region"]["choices"] == [], fields)
 names = {v["name"]: v for v in c.get("/api/voices").json()["voices"]}
 check("音色按区域从接口取；标准 / 自定义的不要，HD 的要", "azure:de-DE-KatjaNeural" in names and "azure:de-DE-Seraphina:DragonHDLatestNeural" in names
       and "azure:xx-XX-OldVoice" not in names, [n for n in names if n.startswith("azure")])
@@ -400,7 +401,7 @@ check("HD 音色有标记", "HD" in names["azure:de-DE-Seraphina:DragonHDLatestN
 CALLS.clear()
 dur, _ = tts.synth("Müller & Söhne <GmbH> — fertig.", "azure:de-DE-KatjaNeural", DATA / "a.mp3", rate="+20%")
 url, hd, ssml = [x for x in CALLS if "cognitiveservices/v1" in x[0]][0]
-check("地址按区域、鉴权头、输出格式、UA", url == "https://westeurope.tts.speech.microsoft.com/cognitiveservices/v1"
+check("地址按区域、鉴权头、输出格式、UA", url == f"https://{tts_cloud._azure_host(DEF)}/cognitiveservices/v1"
       and hd["Ocp-Apim-Subscription-Key"] == "az-key-1234567890" and hd["Content-Type"] == "application/ssml+xml"
       and hd["X-Microsoft-OutputFormat"] == "audio-24khz-96kbitrate-mono-mp3" and hd["User-Agent"], (url, hd))
 check("SSML：音色、语言取自音色名；文字里的 & < > 已转义；语速用接口自带的", "name='de-DE-KatjaNeural'" in ssml and "xml:lang='de-DE'" in ssml
@@ -413,8 +414,8 @@ c.post("/api/settings", headers=H, json={"tts_services": {"azure": {"region": "n
 CALLS.clear()
 tts.synth("North.", "azure:en-US-AvaMultilingualNeural", DATA / "a3.mp3")
 check("改区域：地址跟着变", [x for x in CALLS if "cognitiveservices/v1" in x[0]][0][0].startswith("https://northeurope."))
-check("区域里写了别的东西（想改地址）：不用，退回 westeurope",
-      tts_cloud._azure_region({"tts_services": {"azure": {"region": "evil.com/x?"}}}) == "westeurope"
+check("区域里写了别的东西（想改地址）：不用，退回默认区域",
+      tts_cloud._azure_region({"tts_services": {"azure": {"region": "evil.com/x?"}}}) == DEF
       and tts_cloud._azure_region({"tts_services": {"azure": {"region": "West Europe"}}}) == "westeurope"
       and tts_cloud._azure_region({"tts_services": {"azure": {"region": "swedencentral"}}}) == "swedencentral")
 r = c.post("/api/settings/test-tts", headers=H, json={"service": "azure", "api_key": "bad"}).json()
@@ -426,6 +427,54 @@ MODE["azure_voices_fail"] = True
 names = {v["name"] for v in tts_cloud.voices()}
 check("取不到音色列表：先给几个多语言音色", "azure:en-US-AvaMultilingualNeural" in names and "azure:de-DE-KatjaNeural" not in names)
 MODE["azure_voices_fail"] = False
+tts_cloud._voice_cache.clear()
+
+print("\n== 11b. 中国版 Azure（世纪互联）：区域是中国区域就自动连中国版 ==")
+c.post("/api/settings", headers=H, json={"tts_services": {"azure": {"region": "chinanorth2"}}})
+CALLS.clear()
+tts.synth("你好。", "azure:zh-CN-XiaoxiaoNeural", DATA / "cn.mp3")
+check("合成：连 azure.cn（中国版），不连全球版", [x[0] for x in CALLS if "cognitiveservices/v1" in x[0]]
+      == ["https://chinanorth2.tts.speech.azure.cn/cognitiveservices/v1"], [x[0] for x in CALLS])
+tts_cloud._voice_cache.clear()
+CALLS.clear()
+tts_cloud.voices()
+check("音色列表也从中国版取", [x[0] for x in CALLS if x[0].endswith("/voices/list")] == ["https://chinanorth2.tts.speech.azure.cn/cognitiveservices/voices/list"],
+      [x[0] for x in CALLS])
+check("中国的三个区域都连中国版，其他区域（包括香港的 eastasia）连全球版",
+      [tts_cloud._azure_host(r) for r in ("chinaeast2", "chinanorth2", "chinanorth3", "eastasia", "westeurope")]
+      == ["chinaeast2.tts.speech.azure.cn", "chinanorth2.tts.speech.azure.cn", "chinanorth3.tts.speech.azure.cn",
+          "eastasia.tts.speech.microsoft.com", "westeurope.tts.speech.microsoft.com"])
+
+
+def tz(names, offset, dst, region="CN"):
+    """in_china() for a given time zone and Windows "Country or region"."""
+    import time as _t
+    saved = (_t.tzname, _t.timezone, _t.daylight, tts_cloud._windows_region)
+    _t.tzname, _t.timezone, _t.daylight = names, offset, dst
+    tts_cloud._windows_region = lambda: region
+    try:
+        return tts_cloud.in_china()
+    finally:
+        _t.tzname, _t.timezone, _t.daylight, tts_cloud._windows_region = saved
+
+
+CST, CST_EN = ("中国标准时间", "中国夏令时"), ("China Standard Time", "China Daylight Time")
+check("中国大陆：中国时区（中文或英文 Windows）+ 地区设成中国，算在中国", tz(CST, -28800, 0) and tz(CST_EN, -28800, 0))
+check("香港、澳门：Windows 和北京共用「China Standard Time」时区，但地区是 HK / MO，不算", not tz(CST_EN, -28800, 0, "HK") and not tz(CST, -28800, 0, "MO"))
+check("读不到地区设置（很旧的 Windows）：只看时区", tz(CST, -28800, 0, ""))
+check("别的东八区（新加坡、台北、珀斯）和欧洲：不算", not tz(("Singapore Standard Time", "Singapore Daylight Time"), -28800, 0, "SG")
+      and not tz(("Taipei Standard Time", "Taipei Daylight Time"), -28800, 0, "TW")
+      and not tz(("W. Australia Standard Time", "W. Australia Daylight Time"), -28800, 0, "AU")
+      and not tz(("W. Europe Standard Time", "W. Europe Daylight Time"), -3600, 1, "DE"))
+check("人在欧洲、Windows 地区设成中国：按时区，不算", not tz(("W. Europe Standard Time", "W. Europe Daylight Time"), -3600, 1, "CN"))
+check("泰国（东七区）：不算", not tz(("SE Asia Standard Time", "SE Asia Daylight Time"), -25200, 0, "TH"))
+check("读 Windows 地区设置：是两个字母的国家代码（或读不到）", tts_cloud._windows_region() == "" or len(tts_cloud._windows_region()) == 2,
+      tts_cloud._windows_region())
+st = {x["id"]: x for x in c.get("/api/settings").json()["tts_services"]}
+check("「去创建 Key」的链接：在中国指向中国版门户，其他地方指向全球版",
+      st["azure"]["key_url"].startswith("https://portal.azure.cn/" if tts_cloud.IN_CHINA else "https://portal.azure.com/"), st["azure"]["key_url"])
+check("说明里告诉用户中国版怎么填", "chinaeast2" in st["azure"]["hint"] and "azure.cn" in st["azure"]["hint"], st["azure"]["hint"][-80:])
+c.post("/api/settings", headers=H, json={"tts_services": {"azure": {"region": "northeurope"}}})
 tts_cloud._voice_cache.clear()
 
 print("\n== 12. 新服务和配音流程接上 ==")

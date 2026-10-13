@@ -54,6 +54,7 @@ def fake_synth(text, voice, out_path, rate="", volume="", pitch=""):
             LIVE[0] -= 1
 
 
+REAL_SYNTH = tts.synth                # the real one, for section 7
 tts.synth = fake_synth
 
 
@@ -239,5 +240,129 @@ try:
 finally:
     Project.is_dialogue = orig
 check("问答项目：同时只有 1 段（不会 3 页 × 每页 4 句同时打出去）", PEAK[0] == 1 and res["generated"] == 6, PEAK[0])
+
+print("\n== 7. 免费的 Edge 语音偶尔拒绝连接；Windows 离线语音一次只能做一句，绝不能卡住整个任务 ==")
+import subprocess  # noqa: E402
+import wave  # noqa: E402
+
+FFMPEG = shutil.which("ffmpeg")
+MP3 = subprocess.run([FFMPEG, "-v", "error", "-f", "lavfi", "-i", "sine=f=300:sample_rate=24000", "-t", "1.0", "-f", "mp3", "pipe:1"],
+                     capture_output=True, check=True).stdout
+tts.EDGE_RETRY_WAIT = 0.02
+edge_calls = []
+
+
+def flaky_edge(fails):
+    async def edge(text, voice, out, rate, volume, pitch="+0Hz"):
+        edge_calls.append(text)
+        if len(edge_calls) <= fails:
+            raise RuntimeError("403, message='Invalid response status'")       # what the service answers now and then
+        out.write_bytes(MP3)
+        return [{"t": 0.0, "d": 1.0, "text": text}]
+    return edge
+
+
+def fake_wav(path, sec=0.5):
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(16000)
+        w.writeframes(b"\x00\x01" * int(16000 * sec))
+
+
+offline = []
+real_edge, real_sapi = tts._edge_synth, tts._sapi_run
+tts._sapi_run = lambda text, out: (offline.append(text), fake_wav(out))
+OUTD = DATA / "edge"
+OUTD.mkdir(exist_ok=True)
+try:
+    tts._edge_synth = flaky_edge(2)
+    dur, bounds = REAL_SYNTH("被拒两次的一句。", "zh-CN-XiaoxiaoNeural", OUTD / "a.mp3")
+    check("Edge 被拒两次：重试后用 Edge 的声音做好了（不退回离线语音）", len(edge_calls) == 3 and not offline and bounds and dur > 0.5,
+          (len(edge_calls), offline, bounds))
+    edge_calls.clear()
+    tts._edge_synth = flaky_edge(99)
+    dur, bounds = REAL_SYNTH("一直被拒的一句。", "zh-CN-XiaoxiaoNeural", OUTD / "b.mp3")
+    check("Edge 一直不行：试了 4 次之后才用离线语音", len(edge_calls) == tts.EDGE_TRIES and offline == ["一直被拒的一句。"] and dur > 0.2 and bounds == [],
+          (len(edge_calls), offline))
+
+    # several voice-over threads need the offline voice at the same time (Q&A lines are made 4 at once)
+    live, peak, names = [0], [0], set()
+
+    def slow_sapi(text, out):
+        with LOCK:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+            names.add(threading.current_thread().name)
+        time.sleep(0.15)
+        fake_wav(out)
+        with LOCK:
+            live[0] -= 1
+    tts._sapi_run = slow_sapi
+    errs = []
+
+    def offline_one(i):
+        try:
+            tts._pyttsx3_synth(f"第{i}句", OUTD / f"o{i}.wav")
+        except Exception as e:
+            errs.append(e)
+    ts = [threading.Thread(target=offline_one, args=(i,)) for i in range(4)]
+    [t.start() for t in ts]
+    [t.join(10) for t in ts]
+    check("4 个线程同时要离线语音：一句一句做，都在同一个专门的线程里", peak[0] == 1 and names == {"sapi5"} and not errs
+          and all((OUTD / f"o{i}.wav").exists() for i in range(4)), (peak[0], names, errs))
+
+    # the offline voice hangs: it must not hang the voice-over with it
+    gate = threading.Event()
+    tts._sapi_run = lambda text, out: gate.wait(30)
+    tts.SAPI_TIMEOUT = 0.5
+    t0 = time.perf_counter()
+    try:
+        tts._pyttsx3_synth("卡住的一句", OUTD / "stuck.wav")
+        raised = False
+    except tts.TTSError:
+        raised = True
+    waited = time.perf_counter() - t0
+    check("离线语音卡住：最多等 SAPI_TIMEOUT 就报错，不会永远等下去", raised and waited < 2.0, f"{waited:.2f} 秒")
+    t0 = time.perf_counter()
+    try:
+        tts._pyttsx3_synth("之后的一句", OUTD / "after.wav")
+        fast = False
+    except tts.TTSError:
+        fast = time.perf_counter() - t0 < 0.1
+    check("卡住过一次以后直接报错，不再排队等它", fast)
+    edge_calls.clear()
+    tts._edge_synth = flaky_edge(99)
+    t0 = time.perf_counter()
+    try:
+        REAL_SYNTH("这一段 Edge 和离线语音都不行。", "zh-CN-XiaoxiaoNeural", OUTD / "c.mp3")
+        failed = None
+    except tts.TTSError as e:
+        failed = str(e)
+    check("这时整段配音报出失败（配音任务把它记成失败的一段，接着做下一段），而不是卡住", failed and time.perf_counter() - t0 < 5.0, failed)
+finally:
+    gate.set() if "gate" in dir() else None
+    tts._edge_synth, tts._sapi_run = real_edge, real_sapi
+    tts._sapi_state["stuck"] = False
+    tts.SAPI_TIMEOUT = 90.0
+
+edge_lists = [0]
+
+
+async def flaky_list():
+    edge_lists[0] += 1
+    if edge_lists[0] <= 2:
+        raise RuntimeError("403")
+    return [{"ShortName": "zh-CN-XiaoxiaoNeural", "Locale": "zh-CN", "Gender": "Female", "FriendlyName": "Microsoft Xiaoxiao Online (Natural)"}]
+
+
+import edge_tts  # noqa: E402
+real_list = edge_tts.list_voices
+edge_tts.list_voices = flaky_list
+try:
+    vs = tts.list_voices(force=True)
+finally:
+    edge_tts.list_voices = real_list
+check("音色列表也一样：被拒两次后照样取到", edge_lists[0] == 3 and vs and vs[0]["name"] == "zh-CN-XiaoxiaoNeural", (edge_lists[0], vs[:1]))
 
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))

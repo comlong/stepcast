@@ -140,7 +140,7 @@ Edge voices are free and the default. For more natural voices, add a key under *
 | **Qwen-TTS (Alibaba Cloud Model Studio)** | One voice speaks ten languages including Chinese and English | Same key as Qwen under AI models |
 | **Google Gemini Speech** | One voice speaks over a hundred languages, 30 voices; describe the tone in words (**Tone hint**); two models (Flash TTS, or the cheaper Flash-Lite TTS) | Same key as Google Gemini under AI models. In Europe it needs a paid tier: link a billing account in Google AI Studio |
 | **ElevenLabs** | Widely regarded as the most natural and expressive voices, a huge voice library, especially good for English and European languages; models Multilingual v2 / v3 / Flash v2.5 | Create a key on the website's API Keys page; the free tier has 10,000 characters per month |
-| **Microsoft Azure Speech** | The same voices as the free Edge voices, plus more natural HD voices; European regions and a monthly free allowance | Create a "Speech" resource in the Azure portal, copy its key and enter the resource's region (e.g. `westeurope`) in the settings |
+| **Microsoft Azure Speech** | The same voices as the free Edge voices, plus more natural HD voices; European regions, Azure in China, and a monthly free allowance | Create a "Speech" resource in the Azure portal, copy its key and enter the resource's region (e.g. `westeurope`) in the settings. In China, use Azure operated by 21Vianet (portal.azure.cn) and enter its region (`chinaeast2`, `chinanorth2` or `chinanorth3`): StepCast then connects to the China cloud by itself |
 
 - **Test** synthesises one sentence to check the key (costs a tiny amount)
 - Long paragraphs are synthesised sentence by sentence and joined; the timings align subtitles and slide reveals
@@ -148,6 +148,7 @@ Edge voices are free and the default. For more natural voices, add a key under *
 - Environment variables `MODEL_SPEECH_API_KEY` (Doubao), `MINIMAX_API_KEY`, `DASHSCOPE_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `ELEVENLABS_API_KEY` (or `XI_API_KEY`), `AZURE_SPEECH_KEY` also work
 - None of these services returns word-level timing, so subtitles and slide reveals inside a long paragraph are timed per chunk (a few sentences), not per word
 - **Keeping voice-over text in Europe:** choose an Azure region such as `westeurope`, or ElevenLabs with **Data region → EU** (needs an Enterprise plan). Gemini has no region setting
+- **In China:** Azure operated by 21Vianet keeps the text in its Chinese region; Doubao, MiniMax and Qwen are Chinese services too. On a computer in mainland China (Windows time zone China and Windows country or region China; Hong Kong and Macau share the time zone but not the country), the Azure region and the link for creating a key default to Azure in China; which cloud is used always follows the region you enter
 
 > No key at all? Write the narration yourself in the editor — voice-over and rendering work the same.
 

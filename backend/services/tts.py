@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import queue
 import re
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -102,11 +104,16 @@ def list_voices(force: bool = False) -> List[Dict[str, str]]:
     now = time.time()
     if not force and _voices_cache["data"] and now - _voices_cache["ts"] < 300:
         return _voices_cache["data"]
-    try:
-        import edge_tts
-        raw = _run_async(edge_tts.list_voices())
-    except Exception as e:
-        raise TTSError(i18n.t("获取语音列表失败（需要联网）：{error}", error=e))
+    import edge_tts
+    raw = None
+    for attempt in range(EDGE_TRIES):
+        try:
+            raw = _run_async(edge_tts.list_voices())
+            break
+        except Exception as e:
+            if attempt == EDGE_TRIES - 1:
+                raise TTSError(i18n.t("获取语音列表失败（需要联网）：{error}", error=e))
+            time.sleep(EDGE_RETRY_WAIT * (attempt + 1))
     data = []
     for v in raw:
         data.append({
@@ -148,12 +155,59 @@ async def _edge_synth(text: str, voice: str, out_path: Path,
     return boundaries
 
 
-def _pyttsx3_synth(text: str, out_path: Path) -> None:
+# The free Edge service refuses a connection now and then (HTTP 403 at the handshake, about one request in five in October 2026);
+# a moment later the same request works. So it is tried a few times before falling back to the offline voice.
+EDGE_TRIES = 4
+EDGE_RETRY_WAIT = 0.6        # seconds; the n-th retry waits n times this
+
+# Windows' offline voice (SAPI5) through pyttsx3: one engine for the whole process, not thread-safe, and a COM object that belongs to the
+# thread that made it. Used from several voice-over threads at once it hangs for good (and with it the whole voice-over job). So every
+# use goes to one thread of its own (a daemon: a stuck engine must not keep the program from closing), one at a time, and is never waited
+# for longer than SAPI_TIMEOUT; if it ever hangs, it isn't tried again until the program restarts (the paragraph is reported as failed).
+SAPI_TIMEOUT = 90.0
+_sapi_jobs: "queue.Queue[Tuple[str, Path, threading.Event, List[BaseException]]]" = queue.Queue()
+_sapi_state: Dict[str, Any] = {"stuck": False, "thread": None}
+_sapi_lock = threading.Lock()
+
+
+def _sapi_run(text: str, out_path: Path) -> None:
     import pyttsx3
     engine = pyttsx3.init()
     engine.save_to_file(text, str(out_path))
     engine.runAndWait()
     engine.stop()
+
+
+def _sapi_worker() -> None:
+    try:
+        import pythoncom
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+    while True:
+        text, out_path, done, err = _sapi_jobs.get()
+        try:
+            _sapi_run(text, out_path)
+        except BaseException as e:   # noqa: BLE001 - handed to the caller
+            err.append(e)
+        finally:
+            done.set()
+
+
+def _pyttsx3_synth(text: str, out_path: Path) -> None:
+    if _sapi_state["stuck"]:
+        raise TTSError(i18n.t("SAPI5 也没有生成音频"))
+    with _sapi_lock:
+        if _sapi_state["thread"] is None:
+            _sapi_state["thread"] = threading.Thread(target=_sapi_worker, name="sapi5", daemon=True)
+            _sapi_state["thread"].start()
+    done, err = threading.Event(), []
+    _sapi_jobs.put((text, out_path, done, err))
+    if not done.wait(SAPI_TIMEOUT):
+        _sapi_state["stuck"] = True
+        raise TTSError(i18n.t("SAPI5 也没有生成音频"))
+    if err:
+        raise err[0]
 
 
 def synth(text: str, voice: str, out_path: Path,
@@ -175,11 +229,21 @@ def synth(text: str, voice: str, out_path: Path,
 
     boundaries: List[Dict[str, float]] = []
     part = out_path.with_name(f"{out_path.stem}.{uuid.uuid4().hex[:6]}.part.mp3")
-    try:
-        boundaries = _run_async(_edge_synth(text, voice, part, rate, volume, pitch or "+0Hz"))
-        if not part.exists() or part.stat().st_size < 512:
-            raise TTSError(i18n.t("edge-tts 返回空音频"))
-    except Exception as e:
+    failed: Optional[Exception] = None
+    for attempt in range(EDGE_TRIES):
+        try:
+            boundaries = _run_async(_edge_synth(text, voice, part, rate, volume, pitch or "+0Hz"))
+            if not part.exists() or part.stat().st_size < 512:
+                raise TTSError(i18n.t("edge-tts 返回空音频"))
+            failed = None
+            break
+        except Exception as e:
+            failed = e
+            part.unlink(missing_ok=True)
+            if attempt < EDGE_TRIES - 1:
+                time.sleep(EDGE_RETRY_WAIT * (attempt + 1))
+    if failed is not None:
+        e = failed
         # fallback: SAPI5 (wav only, no word boundaries)
         wav = part.with_suffix(".wav")
         try:
@@ -194,7 +258,10 @@ def synth(text: str, voice: str, out_path: Path,
             part.unlink(missing_ok=True)
             raise TTSError(i18n.t("语音合成失败：{error}；离线兜底同样失败：{error2}", error=e, error2=e2))
         finally:
-            wav.unlink(missing_ok=True)
+            try:
+                wav.unlink(missing_ok=True)
+            except OSError:
+                pass                                 # still held by an offline voice that got stuck; the start-up clean-up removes it
     os.replace(part, out_path)
 
     dur = ffmpeg_util.probe_duration(out_path)

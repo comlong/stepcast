@@ -63,6 +63,44 @@ class Service:
     fields: Tuple[Field, ...] = ()
 
 
+def _windows_region() -> str:
+    """The "Country or region" set in Windows, as an ISO code (CN, HK, DE …); "" when it can't be read. Read through the system API only."""
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        fn = getattr(k, "GetUserDefaultGeoName", None)           # Windows 10 1709 and later
+        if fn is not None:
+            buf = ctypes.create_unicode_buffer(16)
+            if fn(buf, 16) > 0:
+                return buf.value.upper()
+        return {45: "CN", 104: "HK", 151: "MO", 237: "TW"}.get(int(k.GetUserGeoID(16)), "")      # GEOCLASS_NATION; older Windows
+    except Exception:
+        return ""
+
+
+def in_china() -> bool:
+    """A guess at whether this computer is in mainland China, only used for defaults (the region the user enters always decides).
+    Windows' time zone is China's - UTC+8 without daylight saving, "China Standard Time" / 中国标准时间, which Hong Kong and Macau share -
+    and Windows' country or region is mainland China (CN). If the country can't be read, the time zone alone decides."""
+    import time
+    try:
+        names = " ".join(time.tzname)
+        if not (time.timezone == -8 * 3600 and not time.daylight and ("China" in names or "中国" in names)):
+            return False
+    except Exception:
+        return False
+    region = _windows_region()
+    return region == "CN" if region else True
+
+
+# Azure operated by 21Vianet in China is a cloud of its own: separate accounts and keys, its own portal and addresses (azure.cn), regions
+# chinaeast2 / chinanorth2 / chinanorth3. Which Azure is used follows from the region (see _azure_host); being in China only changes the defaults.
+IN_CHINA = in_china()
+AZURE_DEFAULT_REGION = "chinaeast2" if IN_CHINA else "westeurope"
+AZURE_PORTAL = ("https://portal.azure.cn/#create/Microsoft.CognitiveServicesSpeechServices" if IN_CHINA
+                else "https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices")
+
+
 SERVICES: Dict[str, Service] = {s.id: s for s in (
     Service("doubao", N_("豆包语音（火山引擎）"),
             N_("字节跳动，中文最自然的一档。在火山引擎「豆包语音」控制台开通语音合成大模型 2.0，"
@@ -98,10 +136,11 @@ SERVICES: Dict[str, Service] = {s.id: s for s in (
                           (("", N_("默认")), ("eu", N_("欧盟（数据驻留）")), ("us", N_("美国")))))),
     Service("azure", N_("微软 Azure 语音"),
             N_("和默认的 Edge 免费语音是同一套声音，另有更自然的 HD 语音，有欧洲区域，每月有免费额度。"
-               "在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。"),
-            "https://portal.azure.com/#create/Microsoft.CognitiveServicesSpeechServices",
+               "在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。"
+               "在中国用世纪互联运营的 Azure（azure.cn）：区域填 chinaeast2、chinanorth2 或 chinanorth3，会自动连接中国版。"),
+            AZURE_PORTAL,
             ("AZURE_SPEECH_KEY", "SPEECH_KEY"), max_chars=300,
-            fields=(Field("region", N_("区域"), "westeurope"),)),
+            fields=(Field("region", N_("区域"), AZURE_DEFAULT_REGION),)),
 )}
 
 # ---- voices -----------------------------------------------------------------------
@@ -234,7 +273,7 @@ def _eleven_voices(key: str, base: str) -> List[Dict[str, Any]]:
 
 def _azure_voices(key: str, region: str) -> List[Dict[str, Any]]:
     try:
-        r = requests.get(f"https://{region}.tts.speech.microsoft.com/cognitiveservices/voices/list",
+        r = requests.get(f"https://{_azure_host(region)}/cognitiveservices/voices/list",
                          headers={"Ocp-Apim-Subscription-Key": key}, timeout=10)
         data = r.json() if r.status_code < 400 else []
     except Exception:
@@ -636,7 +675,13 @@ _AZURE_REGION = re.compile(r"^[a-z0-9]{3,30}$")
 def _azure_region(cfg: Optional[Dict[str, Any]] = None) -> str:
     """The region of the Speech resource (it becomes part of the address, so only letters and digits are accepted)."""
     region = setting("azure", "region", cfg).lower().replace(" ", "")
-    return region if _AZURE_REGION.match(region) else "westeurope"
+    return region if _AZURE_REGION.match(region) else AZURE_DEFAULT_REGION
+
+
+def _azure_host(region: str) -> str:
+    """Where the Speech resource of that region answers: Azure in China (regions starting with "china", operated by 21Vianet) at azure.cn,
+    every other region at global Azure. A key only works with the cloud and region it was made in."""
+    return f"{region}.tts.speech.azure.cn" if region.startswith("china") else f"{region}.tts.speech.microsoft.com"
 
 
 def _azure(text: str, vid: str, key: str, out: Path, speed: float, cfg: Dict[str, Any]) -> None:
@@ -646,7 +691,7 @@ def _azure(text: str, vid: str, key: str, out: Path, speed: float, cfg: Dict[str
         inner = f'<prosody rate="{(speed - 1) * 100:+.0f}%">{inner}</prosody>'
     ssml = (f"<speak version='1.0' xml:lang='{xml_escape(lang)}'><voice name='{xml_escape(vid, {chr(39): '&apos;'})}'>"
             f"{inner}</voice></speak>")
-    r = requests.post(f"https://{_azure_region(cfg)}.tts.speech.microsoft.com/cognitiveservices/v1",
+    r = requests.post(f"https://{_azure_host(_azure_region(cfg))}/cognitiveservices/v1",
                       headers={"Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml",
                                "X-Microsoft-OutputFormat": "audio-24khz-96kbitrate-mono-mp3", "User-Agent": "StepCast"},
                       data=ssml.encode("utf-8"), timeout=120)

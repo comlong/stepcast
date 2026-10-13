@@ -244,7 +244,7 @@
   "后台任务": "Background task",
   "听一下没问题就确认；不满意点「重录」": "Listen back and confirm if it's OK, or click “Record again”",
   "启动失败": "Couldn't start",
-  "和默认的 Edge 免费语音是同一套声音，另有更自然的 HD 语音，有欧洲区域，每月有免费额度。在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。": "The same voices as the free default Edge voices, plus more natural HD voices, with European regions and a monthly free allowance. Create a “Speech” resource in the Azure portal, copy its key, and enter the region the resource is in below (in Europe usually westeurope or northeurope).",
+  "和默认的 Edge 免费语音是同一套声音，另有更自然的 HD 语音，有欧洲区域，每月有免费额度。在 Azure 门户创建「语音服务」资源，复制它的 Key，并在下面填资源所在的区域（欧洲常用 westeurope、northeurope）。在中国用世纪互联运营的 Azure（azure.cn）：区域填 chinaeast2、chinanorth2 或 chinanorth3，会自动连接中国版。": "The same voices as the free default Edge voices, plus more natural HD voices, with European regions and a monthly free allowance. Create a “Speech” resource in the Azure portal, copy its key, and enter the region the resource is in below (in Europe usually westeurope or northeurope). In China, use Azure operated by 21Vianet (azure.cn): enter chinaeast2, chinanorth2 or chinanorth3 as the region and the China cloud is used automatically.",
   "回放文件读不出来，请再试一次": "The playback file can't be read, please try again",
   "回放这一页": "Play this page",
   "图文文档（Markdown）": "Illustrated guide (Markdown)",
