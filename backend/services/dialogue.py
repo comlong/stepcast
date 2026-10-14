@@ -12,7 +12,7 @@ import shutil
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .. import i18n
 from ..models import Project, Speaker, Step
@@ -138,19 +138,20 @@ def speaker_names(proj: Project) -> List[str]:
 # ---- line-by-line voice-over -------------------------------------------------------
 
 def synth_lines(proj: Project, step: Step, out_path: Path, rate: str = "",
-                volume: str = "") -> Tuple[float, List[Dict[str, Any]], List[List[float]]]:
+                volume: str = "", used: Optional[Dict[str, str]] = None) -> Tuple[float, List[Dict[str, Any]], List[List[float]]]:
     """Synthesise a step's lines one by one (each with its speaker's voice) and join them into one voice-over.
-    Returns (duration, word boundaries, [start, end] of each line). Boundaries are already on the joined voice-over's timeline, so subtitles stay in sync."""
+    Returns (duration, word boundaries, [start, end] of each line). Boundaries are already on the joined voice-over's timeline, so subtitles stay in sync.
+    used["fallback"] is set when Windows' own voice had to read a line (see tts.synth)."""
     lines = [ln for ln in step.lines if (ln.text or "").strip()]
     if not lines:
         raise tts.TTSError(i18n.t("解说文本为空。"))
-    voices = {sp.role: sp.voice for sp in ensure_speakers(proj)}
+    voices = {sp.role: tts.free_voice_for(sp.voice, proj.language, male=sp.role == "expert") for sp in ensure_speakers(proj)}
     tmp = out_path.parent / f"{out_path.stem}.lines_{uuid.uuid4().hex[:6]}"
     tmp.mkdir(parents=True, exist_ok=True)
     try:
         def one(k: int):
             p = tmp / f"{k:03d}.mp3"
-            dur, bounds = tts.synth(lines[k].text, voices.get(lines[k].who) or voices["host"], p, rate, volume)
+            dur, bounds = tts.synth(lines[k].text, voices.get(lines[k].who) or voices["host"], p, rate, volume, used=used)
             return p, dur, bounds
 
         with ThreadPoolExecutor(max_workers=min(SYNTH_WORKERS, len(lines))) as ex:

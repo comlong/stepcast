@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Anhören",
   "🔒 打码": "🔒 Schwärzen",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} wurde unterbrochen: Der lokale Dienst wurde neu gestartet. Bitte noch einmal klicken",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Der lokale Dienst ist nicht erreichbar – StepCast wurde vielleicht beendet. Bitte StepCast neu starten und dann noch einmal klicken"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Der lokale Dienst ist nicht erreichbar – StepCast wurde vielleicht beendet. Bitte StepCast neu starten und dann noch einmal klicken",
+  "{n} 段没能配音：{error}": "{n, plural, one {# Absatz hat} other {# Absätze haben}} keine Sprachausgabe: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "Die Online-Stimme war diesmal nicht erreichbar, daher {n, plural, one {wurde # Absatz} other {wurden # Absätze}} mit der Stimme dieses Computers gelesen (schlechtere Qualität). Klicken Sie später noch einmal auf „② Sprachausgabe erzeugen“, dann {n, plural, one {wird er} other {werden sie}} automatisch mit der gewählten Stimme neu vertont.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "dieser Computer hat keine Windows-Stimme für {lang} als Ersatz",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "Der Schlüssel für {service} ist gespeichert. Damit er für die Sprachausgabe genutzt wird, wählen Sie unter „Stimme“ eine Stimme, die mit „{service}“ beginnt, und klicken Sie erneut auf „Speichern“.",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Dieses Projekt verwendet jetzt die neue Stimme. Klicken Sie auf „② Sprachausgabe erzeugen“, dann werden auch die bereits vertonten Schritte mit ihr neu vertont.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Kostenpflichtige Stimmen sind aus: Ab jetzt werden nur die kostenlosen Edge-Stimmen verwendet. Ihre Schlüssel bleiben gespeichert.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "Die kostenpflichtigen Sprachdienste sind ausgeschaltet (⚙ Einstellungen → Sprachausgabe); jetzt werden nur die kostenlosen Edge-Stimmen verwendet",
+  "使用付费配音服务": "Kostenpflichtige Sprachdienste verwenden",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Wenn aus, werden nur die kostenlosen Edge-Stimmen verwendet. Ihre Schlüssel bleiben gespeichert, Sie können es jederzeit wieder einschalten."
 }

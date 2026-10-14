@@ -177,6 +177,8 @@ class Step(BaseModel):
     # --- generated ---
     audio: str = ""           # file name relative to audio/
     voice_source: str = "tts"  # tts = AI voice | own = the user's recording (editing the text doesn't discard it)
+    audio_voice: str = ""     # the voice the AI voice-over was made with; "sapi:<name>" = Windows' own voice read it because the online one
+                              # failed, so it is voiced again the next time ("" = made by an older version)
     audio_duration: float = 0.0
     boundaries: List[Dict[str, Any]] = Field(default_factory=list)  # word boundaries (subtitle timing)
     line_times: List[List[float]] = Field(default_factory=list)     # [start, end] of each dialogue line in the voice-over (seconds)

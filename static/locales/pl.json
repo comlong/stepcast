@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Odsłuchaj",
   "🔒 打码": "🔒 Ukryj",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} – przerwano: lokalna usługa została uruchomiona ponownie. Kliknij jeszcze raz",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Brak połączenia z lokalną usługą – StepCast mógł zostać zamknięty. Uruchom StepCast ponownie i kliknij jeszcze raz"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Brak połączenia z lokalną usługą – StepCast mógł zostać zamknięty. Uruchom StepCast ponownie i kliknij jeszcze raz",
+  "{n} 段没能配音：{error}": "{n, plural, one {# akapit nie ma} few {# akapity nie mają} many {# akapitów nie ma} other {# akapitu nie ma}} głosu: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "Tym razem nie udało się połączyć z głosem online, więc {n, plural, one {# akapit został przeczytany} few {# akapity zostały przeczytane} many {# akapitów zostało przeczytanych} other {# akapitu zostało przeczytane}} głosem tego komputera (gorsza jakość). Kliknij później ponownie „② Generuj głos”, a zostaną automatycznie nagrane od nowa wybranym głosem.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "ten komputer nie ma głosu Windows dla {lang}, który mógłby go zastąpić",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "Klucz {service} został zapisany. Aby go używać, wybierz w polu „Głos lektora” głos zaczynający się od „{service}” i ponownie kliknij „Zapisz”.",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Ten projekt używa teraz nowego głosu. Kliknij „② Generuj głos”, a także kroki, które mają już głos, zostaną nagrane od nowa nowym głosem.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Płatne głosy są wyłączone: od teraz używane są tylko bezpłatne głosy Edge. Klucze pozostają zapisane.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "Płatne usługi głosowe są wyłączone (⚙ Ustawienia → Głos); teraz używane są tylko bezpłatne głosy Edge",
+  "使用付费配音服务": "Używaj płatnych usług głosowych",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Po wyłączeniu używane są tylko bezpłatne głosy Edge. Klucze pozostają zapisane, więc w każdej chwili możesz to znowu włączyć."
 }

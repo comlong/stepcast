@@ -97,7 +97,7 @@ print("\n== 2. 片头片尾：换了主持人音色要重新合成 ==")
 USED = []
 
 
-def fake_synth(text, v, out, rate="", volume="", pitch=""):
+def fake_synth(text, v, out, rate="", volume="", pitch="", used=None):
     USED.append(v)
     out.write_bytes(mp3(1.0))
     return 1.0, []
@@ -225,5 +225,57 @@ v1 = tts_cloud.voices()
 v2 = tts_cloud.voices()
 check("取失败用内置音色，第二次不再请求", len([u for u in CALLS if u.endswith("/get_voice")]) == 1
       and any(v["name"].startswith("minimax:") for v in v2), CALLS)
+
+print("\n== 单人项目换了音色（比如换成付费音色）：已经配好的步骤，下次合成语音时用新音色重配，不用先删 ==")
+tts.synth = fake_synth
+q = storage.create("换音色", "zh-CN")
+q.steps = [Step(kind="slide", screenshot="x.png", narration=f"第{i}段。", caption=f"第{i}段。") for i in (1, 2)]
+storage.save(q)
+q = storage.load(q.id)
+tts.synth_project(q)
+old = q.voice
+for s in q.steps:
+    s.audio_voice = ""                      # voiced by an older version, which didn't record the voice
+storage.save(q)
+c.patch(f"/api/projects/{q.id}", headers=H, json={"voice": "minimax:female-shaonv"})
+q = storage.load(q.id)
+check("换音色时记下了旧配音是哪个音色读的", q.voice == "minimax:female-shaonv" and [s.audio_voice for s in q.steps] == [old, old],
+      (q.voice, [s.audio_voice for s in q.steps]))
+USED.clear()
+res = tts.synth_project(q)
+storage.save(q)
+check("再点「合成语音」：两步都用新音色重新配音", USED == ["minimax:female-shaonv"] * 2 and res["generated"] == 2
+      and [s.audio_voice for s in q.steps] == ["minimax:female-shaonv"] * 2, (USED, res))
+USED.clear()
+tts.synth_project(storage.load(q.id))
+check("音色没再变：不重复配音", USED == [], USED)
+
+print("\n== 关掉「使用付费配音服务」：只用免费的 Edge 语音，Key 保留 ==")
+config.save({"tts_paid_enabled": False})
+check("付费音色不出现在列表里（Key 还在）", tts_cloud.voices() == [] and tts_cloud.api_key("minimax"), len(tts_cloud.voices()))
+check("付费音色换成这种语言的免费音色；问答的讲师换成免费的男声",
+      tts.free_voice_for("minimax:female-shaonv", "zh-CN") == "zh-CN-XiaoxiaoNeural"
+      and tts.free_voice_for("minimax:male-qn", "zh-CN", male=True) == "zh-CN-YunxiNeural"
+      and tts.free_voice_for("zh-CN-YunjianNeural", "zh-CN") == "zh-CN-YunjianNeural")
+USED.clear()
+q = storage.load(q.id)
+res = tts.synth_project(q)
+storage.save(q)
+check("付费音色的项目：用免费的 Edge 音色重新配音，一句也不发给付费服务；项目自己选的音色不改",
+      USED == ["zh-CN-XiaoxiaoNeural"] * 2 and q.voice == "minimax:female-shaonv"
+      and [s.audio_voice for s in q.steps] == ["zh-CN-XiaoxiaoNeural"] * 2, (USED, q.voice))
+r = c.post("/api/tts/preview", headers=H, json={"voice": "minimax:female-shaonv"})
+check("试听付费音色：说明付费配音已关闭，不去请求", r.status_code == 400 and "Edge" in r.json()["detail"], r.status_code)
+d = dlg_project()
+d.speakers[1].voice = "minimax:male-qn"
+storage.save(d)
+d = storage.load(d.id)
+USED.clear()
+tts.synth_project(d)
+check("问答项目：讲师的付费音色换成免费的男声", "zh-CN-YunxiNeural" in USED and not any(v.startswith("minimax:") for v in USED), USED)
+config.save({"tts_paid_enabled": True})
+USED.clear()
+tts.synth_project(storage.load(q.id))
+check("再打开：下次合成语音用回付费音色重新配音", USED == ["minimax:female-shaonv"] * 2, USED)
 
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))

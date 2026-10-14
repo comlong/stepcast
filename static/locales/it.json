@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Ascolta",
   "🔒 打码": "🔒 Oscura",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} interrotto: il servizio locale è stato riavviato. Fai clic di nuovo",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Impossibile raggiungere il servizio locale: forse StepCast è stato chiuso. Riavvia StepCast e fai clic di nuovo"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Impossibile raggiungere il servizio locale: forse StepCast è stato chiuso. Riavvia StepCast e fai clic di nuovo",
+  "{n} 段没能配音：{error}": "{n, plural, one {# paragrafo non ha} other {# paragrafi non hanno}} la voce: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "Questa volta la voce online non era raggiungibile, quindi {n, plural, one {# paragrafo è stato letto} other {# paragrafi sono stati letti}} con la voce di questo computer (qualità inferiore). Fai di nuovo clic su «② Genera voce» più tardi e {n, plural, one {verrà} other {verranno}} rifatt{n, plural, one {o} other {i}} automaticamente con la voce scelta.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "questo computer non ha una voce Windows per {lang} da usare al suo posto",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "La chiave di {service} è salvata. Per usarla, scegli in «Voce» una voce che inizia con «{service}» e fai di nuovo clic su «Salva».",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Questo progetto ora usa la nuova voce. Fai clic su «② Genera voce» e anche i passaggi che hanno già la voce verranno rifatti con quella nuova.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Le voci a pagamento sono disattivate: d'ora in poi si usano solo le voci Edge gratuite. Le chiavi restano salvate.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "I servizi vocali a pagamento sono disattivati (⚙ Impostazioni → Voce); ora si usano solo le voci Edge gratuite",
+  "使用付费配音服务": "Usa i servizi vocali a pagamento",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Se disattivato, si usano solo le voci Edge gratuite. Le chiavi restano salvate, puoi riattivarlo quando vuoi."
 }

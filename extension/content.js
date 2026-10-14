@@ -465,7 +465,16 @@
     } else if (msg.type === 'vt_overlay') {
       overlayHidden = !msg.show;
       renderOverlay();
-      sendResponse({ ok: true });
+      if (msg.show) {
+        sendResponse({ ok: true });
+      } else {
+        // answer only once a frame without the overlay has been painted, so the screenshot taken next can't catch it;
+        // the timer answers anyway if the page doesn't paint (requestAnimationFrame waits while a tab is in the background)
+        let done = false;
+        const answer = () => { if (!done) { done = true; sendResponse({ ok: true }); } };
+        requestAnimationFrame(() => requestAnimationFrame(answer));
+        setTimeout(answer, 150);
+      }
     } else if (msg.type === 'vt_recording') {
       recording = !!msg.recording;
       if (typeof msg.stepCount === 'number') stepCount = msg.stepCount;

@@ -21,7 +21,7 @@ _locks_guard = threading.Lock()
 PID_RE = re.compile(r"^p_[0-9a-f]{12}$")
 
 # These fields describe "this step's voice-over" and must always be written together, otherwise text and audio get out of sync
-AUDIO_FIELDS = ("audio", "audio_duration", "boundaries", "voice_source", "line_times")
+AUDIO_FIELDS = ("audio", "audio_duration", "boundaries", "voice_source", "line_times", "audio_voice")
 
 
 def valid_pid(pid: str) -> bool:

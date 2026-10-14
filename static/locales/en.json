@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Play",
   "🔒 打码": "🔒 Redact",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} was interrupted: the local service was restarted. Please click it again",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Can't reach the local service — StepCast may have been closed. Please start StepCast again, then click once more"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Can't reach the local service — StepCast may have been closed. Please start StepCast again, then click once more",
+  "{n} 段没能配音：{error}": "{n, plural, one {# paragraph has} other {# paragraphs have}} no voice-over: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "The online voice could not be reached this time, so {n, plural, one {# paragraph was} other {# paragraphs were}} read by this computer's own voice (lower quality). Click \"② Generate voice-over\" again later and {n, plural, one {it is} other {they are}} voiced again with the chosen voice automatically.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "this computer has no Windows voice for {lang} to stand in",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "The {service} key is saved. To use it for the voice-over, choose a voice starting with \"{service}\" under \"Voice\" and click Save again.",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "This project now uses the new voice. Click \"② Generate voice-over\" and the steps already voiced are voiced again with it.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Paid voices are off: from now on only the free Edge voices are used. Your keys stay saved.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "The paid voice services are switched off (⚙ Settings → Voice-over); only the free Edge voices are used now",
+  "使用付费配音服务": "Use paid voice services",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "When off, only the free Edge voices are used. Your keys stay saved, so you can switch back on any time."
 }

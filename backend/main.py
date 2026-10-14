@@ -25,7 +25,7 @@ from .models import (CardStyle, CaptureStepReq, DialogueLine, PlaybackReq, Proje
 from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
                        slides, tts, tts_cloud, video, voice)
 
-app = FastAPI(title="StepCast", version="1.9.3")
+app = FastAPI(title="StepCast", version="1.9.4")
 
 # ---- local access only ---------------------------------------------------
 # The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
@@ -423,6 +423,12 @@ def patch_project(pid: str, body: Dict[str, Any] = Body(...)):
             if k in fields:
                 if k == "voice" and p.is_dialogue():
                     continue              # Q&A voices are set per speaker under "🎭 Speakers", not by the global default voice
+                if k == "voice" and v and v != p.voice:
+                    # the AI voice-over so far was read by the old voice; older projects don't record that, so note it now:
+                    # the next voice-over then makes those steps again with the new voice (no need to delete them first)
+                    for s in p.steps:
+                        if s.voice_source == "tts" and s.audio and not s.audio_voice:
+                            s.audio_voice = p.voice
                 if k == "language" and p.is_dialogue() and v and v != p.language:
                     dialogue.retarget(p, v)
                 # intro / outro text changed: the old voice-over is outdated, otherwise the next synthesis would skip it
@@ -620,14 +626,17 @@ def step_tts(pid: str, sid: str, body: Dict[str, Any] = Body(default={})):
         raise HTTPException(400, i18n.t("这一步还没有解说词"))
     path = storage.audio_dir(pid) / f"{step.id}.mp3"
     times: List[List[float]] = []
+    used: Dict[str, str] = {}
+    voice = ""
     try:
         if proj.is_dialogue() and step.lines:          # Q&A: synthesise line by line with each speaker's voice
-            dur, bounds, times = dialogue.synth_lines(proj, step, path)
+            dur, bounds, times = dialogue.synth_lines(proj, step, path, used=used)
         else:
             voice = body.get("voice") or proj.voice or tts.default_voice(proj.language)
             if proj.is_dialogue():
                 voice = dialogue.speaker(proj, "host").voice
-            dur, bounds = tts.synth(step.narration, voice, path)
+            voice = tts.free_voice_for(voice, proj.language)
+            dur, bounds = tts.synth(step.narration, voice, path, used=used)
     except Exception as e:
         raise HTTPException(502, str(e))
 
@@ -636,11 +645,14 @@ def step_tts(pid: str, sid: str, body: Dict[str, Any] = Body(default={})):
             if s.id == sid:
                 s.audio = path.name
                 s.voice_source = "tts"
+                s.audio_voice = tts.FALLBACK + used["fallback"] if used.get("fallback") else voice
                 s.audio_duration = dur
                 s.boundaries = bounds
                 s.line_times = times
     storage.update(pid, _do)
-    return {"audio": path.name, "duration": dur}
+    warning = i18n.t("在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。",
+                     n=1) if used.get("fallback") else ""
+    return {"audio": path.name, "duration": dur, "warning": warning}
 
 
 @app.get("/api/projects/{pid}/steps/{sid}/preview")
@@ -991,9 +1003,11 @@ def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = 
             if mode != "own":
                 before, proj = _snapshot(pid)
                 with _keep_done_on_stop(pid, before, proj, step_fields=AUDIO, project_fields=("voice", "speakers")):
-                    tts.synth_project(proj, only_missing=True,
-                                      progress=lambda f, m: job.progress(0.9 + f * 0.09, m))
+                    voiced = tts.synth_project(proj, only_missing=True,
+                                               progress=lambda f, m: job.progress(0.9 + f * 0.09, m))
                 storage.commit(pid, before, proj, step_fields=AUDIO, project_fields=("voice", "speakers"))
+                if voiced.get("warning"):
+                    r["warning"] = voiced["warning"]
             job.progress(1.0, i18n.t("讲解已写入 {n} 个步骤（保留原声）", n=r.get("steps", 0)) if mode == "own"
                          else i18n.t("讲解已写入 {n} 个步骤，并已生成 AI 配音", n=r.get("steps", 0)))
             return r
@@ -1165,7 +1179,7 @@ def card_tts(pid: str, kind: str, body: Dict[str, Any] = Body(default={})):
     text = (proj.intro if kind == "intro" else proj.outro) or ""
     if not text.strip():
         raise HTTPException(400, i18n.t("片头还没有旁白文案") if kind == "intro" else i18n.t("片尾还没有旁白文案"))
-    voice = body.get("voice") or proj.voice or tts.default_voice(proj.language)
+    voice = tts.free_voice_for(body.get("voice") or proj.voice or tts.default_voice(proj.language), proj.language)
     try:
         dur = tts.synth_card(storage.audio_dir(pid), kind, text, voice)
     except Exception as e:
@@ -1177,6 +1191,8 @@ def card_tts(pid: str, kind: str, body: Dict[str, Any] = Body(default={})):
 def tts_preview(body: Dict[str, Any] = Body(default={})):
     """Voice preview: synthesise a short sample without touching any project data."""
     voice = body.get("voice") or config.get("voice")
+    if tts_cloud.is_cloud(voice) and not tts_cloud.paid_on():
+        raise HTTPException(400, i18n.t("付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音"))
     text = (body.get("text") or "").strip()[:200]
     if not text:
         loc = (tts_cloud.voice_info(voice).get("locale", "zh") if tts_cloud.is_cloud(voice)
@@ -1421,7 +1437,7 @@ def _auto_job(pid: str, style: str = "friendly", overwrite: bool = False, write_
         out["video"] = video.render_project(
             proj, progress=lambda f, m: job.progress(0.52 + f * 0.48, m))
         storage.commit(pid, before, proj, step_fields=("duration",), project_fields=("output",))
-        out["warning"] = out["video"].get("warning", "")
+        out["warning"] = "\n\n".join(w for w in (out["tts"].get("warning", ""), out["video"].get("warning", "")) if w)
         return out
     return _submit("auto", work, pid, exclusive=jobs.HEAVY)
 

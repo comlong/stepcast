@@ -42,7 +42,7 @@ def check(name, cond, detail=""):
 USED = []
 
 
-def fake_synth(text, voice, out_path, rate="", volume="", pitch=""):
+def fake_synth(text, voice, out_path, rate="", volume="", pitch="", used=None):
     dur = round(0.6 + 0.08 * len(text), 2)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run([FF, "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=400:sample_rate=24000",

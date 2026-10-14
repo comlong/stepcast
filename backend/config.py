@@ -49,6 +49,7 @@ DEFAULTS: Dict[str, Any] = {
     "llm_providers": {},
     # paid voice services: tts_services[doubao | minimax | qwen | gemini | elevenlabs | azure] = {api_key, voices (your own voice IDs), model, region, …}
     "tts_services": {},
+    "tts_paid_enabled": True,     # the paid voice services are in use; off = only the free Edge voices (keys stay saved for later)
     # fields from old versions that only supported DeepSeek; still valid
     "deepseek_api_key": "",
     "deepseek_base_url": "https://api.deepseek.com",

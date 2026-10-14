@@ -29,6 +29,7 @@ N, DELAY = 9, 0.3
 LOCK = threading.Lock()
 LIVE, PEAK, CALLS, THREADS = [0], [0], [], set()
 FAIL_ON = set()
+FALLBACK_ON = set()             # paragraphs the fake "reads with Windows' own voice" (the online voice failed)
 
 
 def check(name, cond, detail=""):
@@ -36,7 +37,7 @@ def check(name, cond, detail=""):
     cond or fails.append(name)
 
 
-def fake_synth(text, voice, out_path, rate="", volume="", pitch=""):
+def fake_synth(text, voice, out_path, rate="", volume="", pitch="", used=None):
     with LOCK:
         LIVE[0] += 1
         PEAK[0] = max(PEAK[0], LIVE[0])
@@ -46,6 +47,8 @@ def fake_synth(text, voice, out_path, rate="", volume="", pitch=""):
         time.sleep(DELAY)
         if any(f in text for f in FAIL_ON):
             raise tts.TTSError("service said no")
+        if used is not None and any(f in text for f in FALLBACK_ON):
+            used["fallback"] = "Microsoft Huihui"
         dur = 1.0 + len(text) / 100
         out_path.write_bytes(f"new {dur:.3f}".encode().ljust(1000, b"x"))     # the file says which duration it belongs to
         return dur, [{"t": 0.0, "d": 1.0, "text": text}]
@@ -63,6 +66,7 @@ def reset():
     CALLS.clear()
     THREADS.clear()
     FAIL_ON.clear()
+    FALLBACK_ON.clear()
 
 
 def project(n=N):
@@ -272,7 +276,7 @@ def fake_wav(path, sec=0.5):
 
 offline = []
 real_edge, real_sapi = tts._edge_synth, tts._sapi_run
-tts._sapi_run = lambda text, out: (offline.append(text), fake_wav(out))
+tts._sapi_run = lambda text, out, lang: (offline.append(text), fake_wav(out), "Microsoft Huihui")[-1]
 OUTD = DATA / "edge"
 OUTD.mkdir(exist_ok=True)
 try:
@@ -289,7 +293,7 @@ try:
     # several voice-over threads need the offline voice at the same time (Q&A lines are made 4 at once)
     live, peak, names = [0], [0], set()
 
-    def slow_sapi(text, out):
+    def slow_sapi(text, out, lang):
         with LOCK:
             live[0] += 1
             peak[0] = max(peak[0], live[0])
@@ -298,6 +302,7 @@ try:
         fake_wav(out)
         with LOCK:
             live[0] -= 1
+        return "Microsoft Huihui"
     tts._sapi_run = slow_sapi
     errs = []
 
@@ -314,7 +319,7 @@ try:
 
     # the offline voice hangs: it must not hang the voice-over with it
     gate = threading.Event()
-    tts._sapi_run = lambda text, out: gate.wait(30)
+    tts._sapi_run = lambda text, out, lang: gate.wait(30)
     tts.SAPI_TIMEOUT = 0.5
     t0 = time.perf_counter()
     try:
@@ -364,5 +369,115 @@ try:
 finally:
     edge_tts.list_voices = real_list
 check("音色列表也一样：被拒两次后照样取到", edge_lists[0] == 3 and vs and vs[0]["name"] == "zh-CN-XiaoxiaoNeural", (edge_lists[0], vs[:1]))
+
+print("\n== 8. Edge 连不上时：用这台电脑上同一种语言的 Windows 语音，结果里提醒，下次合成语音时自动重配 ==")
+import types  # noqa: E402
+
+
+class FakeVoice:
+    def __init__(self, vid, name, langs):
+        self.id, self.name, self.languages = vid, name, langs
+
+
+# what a Windows with the English and the Chinese voice installed lists (the default voice is the English one)
+VOICES = [FakeVoice("david", "Microsoft David Desktop", ["en-US"]), FakeVoice("zira", "Microsoft Zira Desktop", ["en-US"]),
+          FakeVoice("huihui", "Microsoft Huihui Desktop", ["zh-CN"])]
+check("音色的语言：zh-CN-XiaoxiaoNeural 是 zh-CN；付费服务的音色 id 说不出", tts.voice_lang("zh-CN-XiaoxiaoNeural") == "zh-CN"
+      and tts.voice_lang("zh-CN-liaoning-XiaobeiNeural") == "zh-CN" and tts.voice_lang("doubao:zh_female_x") == "")
+
+
+def pick(lang):
+    return getattr(tts._sapi_pick(VOICES, lang), "id", None)
+
+
+check("中文找到中文的 Windows 语音，而不是默认的英文 David（它会跳过所有汉字，只念英文单词）", pick("zh-CN") == "huihui", pick("zh-CN"))
+check("同一种语言的其他地区也行（en-GB 用美式英语的声音）", pick("en-GB") == "david", pick("en-GB"))
+check("这台电脑没有这种语言的 Windows 语音：None，不拿别的语言凑合", pick("de-DE") is None)
+
+
+class FakeEngine:
+    def __init__(self):
+        self.props, self.saved = {}, []
+
+    def getProperty(self, key):
+        return VOICES if key == "voices" else self.props.get(key)
+
+    def setProperty(self, key, value):
+        self.props[key] = value
+
+    def save_to_file(self, text, path):
+        self.saved.append(text)
+        fake_wav(Path(path))
+
+    def runAndWait(self):
+        pass
+
+    def stop(self):
+        pass
+
+
+ENGINE = FakeEngine()
+real_pyttsx3 = sys.modules.get("pyttsx3")
+sys.modules["pyttsx3"] = types.SimpleNamespace(init=lambda: ENGINE)
+try:
+    name = tts._sapi_run("中文这一句。", OUTD / "zh.wav", "zh-CN")
+    check("Windows 语音用中文的声音读中文", ENGINE.props.get("voice") == "huihui" and name == "Microsoft Huihui Desktop"
+          and ENGINE.saved == ["中文这一句。"], (ENGINE.props, name))
+    try:
+        tts._sapi_run("Guten Tag.", OUTD / "de.wav", "de-DE")
+        err = None
+    except tts.TTSError as e:
+        err = str(e)
+    check("没有德语的 Windows 语音：报错说明是哪种语言，不生成音频", err and "de-DE" in err and not (OUTD / "de.wav").exists(), err)
+finally:
+    if real_pyttsx3 is None:
+        sys.modules.pop("pyttsx3", None)
+    else:
+        sys.modules["pyttsx3"] = real_pyttsx3
+
+real_edge, real_sapi = tts._edge_synth, tts._sapi_run
+langs = []
+edge_calls.clear()
+tts._edge_synth = flaky_edge(99)
+tts._sapi_state["stuck"] = False
+tts._sapi_run = lambda text, out, lang: (langs.append(lang), fake_wav(out), "Microsoft Huihui Desktop")[-1]
+try:
+    used = {}
+    REAL_SYNTH("在线语音连不上的一句。", "zh-CN-XiaoxiaoNeural", OUTD / "d.mp3", used=used)
+    check("Edge 一直不行：退回时交给 Windows 的是解说的语言，并告诉调用方是哪个声音读的", langs == ["zh-CN"]
+          and used.get("fallback") == "Microsoft Huihui Desktop", (langs, used))
+
+    def no_voice(text, out, lang):
+        raise tts.TTSError(f"这台电脑没有 {lang} 的 Windows 语音可以代替")
+    tts._sapi_run = no_voice
+    try:
+        REAL_SYNTH("又一句。", "zh-CN-XiaoxiaoNeural", OUTD / "e.mp3")
+        err = None
+    except tts.TTSError as e:
+        err = str(e)
+    check("连同一种语言的 Windows 语音也没有：这一段报失败（不再生成只有英文单词的音频）", err and "zh-CN" in err and not (OUTD / "e.mp3").exists(), err)
+finally:
+    tts._edge_synth, tts._sapi_run = real_edge, real_sapi
+
+reset()
+config.save({"tts_workers": 0})
+p = project(4)
+p.intro = "片头这一句。"
+FALLBACK_ON.update({"第2段", "片头"})
+res, msgs, wall = run(p)
+check("片头和第 2 段用了 Windows 语音：结果里有提醒（编辑器会醒目地弹出来），说了几段", res["fallback"] == 2 and "2 段" in res["warning"]
+      and "② 合成语音" in res["warning"], res)
+check("步骤记下读它的声音：第 2 段是 sapi:…，其余是项目的音色", p.steps[1].audio_voice == "sapi:Microsoft Huihui"
+      and all(s.audio_voice == res["voice"] for i, s in enumerate(p.steps) if i != 1), [s.audio_voice for s in p.steps])
+reset()
+res2, _, _ = run(p)
+check("再点「合成语音」：只重配 Windows 语音读过的那两段（片头、第 2 段），别的跳过；这次正常，就没有提醒",
+      sorted(CALLS) == sorted(["第2段解说。", "片头这一句。"]) and res2["fallback"] == 0 and not res2["warning"]
+      and p.steps[1].audio_voice == res2["voice"], (CALLS, res2))
+reset()
+FAIL_ON.add("第3段")
+res3, _, _ = run(project(3))
+check("有一段没能配音：也写进提醒（不再只在进度条上一闪而过）", res3["errors"] and "1 段没能配音" in res3["warning"]
+      and "service said no" in res3["warning"], res3["warning"])
 
 print("\n" + ("全部通过" if not fails else f"失败 {len(fails)} 项：{fails}"))

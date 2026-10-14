@@ -1299,6 +1299,7 @@ function fillSettingsForm() {
   $('#sBadge').checked = c.show_step_badge !== false;
   $('#sFrame').checked = c.browser_frame !== false;
   $('#sSubs').checked = !!c.burn_subtitles;
+  $('#sPaidTts').checked = c.tts_paid_enabled !== false;
   $('#sSubSpace').checked = c.second_sub_space !== false;
   $('#sIntro').checked = !!c.intro_enabled;
   $('#sOutro').checked = c.outro_enabled !== false;
@@ -1353,27 +1354,55 @@ async function saveSettings() {
     asr_model: $('#sAsrModel').value,
     hf_endpoint: $('#sHfEndpoint').value.trim(),
     asr_remove_fillers: $('#sFillers').checked,
+    tts_paid_enabled: $('#sPaidTts').checked,
   };
+  const paidWas = S.settings.tts_paid_enabled !== false, paidNow = patch.tts_paid_enabled;
+  const paidVoice = (v) => /^[a-z]+:/.test(v || '');                 // paid voices carry their service's prefix ("gemini:Kore")
+  // paid voices switched off: a paid default voice becomes the free one for the narration language
+  if (!paidNow && paidVoice(patch.voice)) patch.voice = S.voiceDefaults[patch.language || prevLang] || '';
   // while a list hasn't loaded yet (e.g. voices need the internet) the dropdown is empty: don't submit empty values, keep the previous setting
   if (!patch.language) delete patch.language;
   if (!patch.voice) delete patch.voice;
+  const newKeys = Object.entries(patch.tts_services || {}).filter(([, e]) => e.api_key).map(([id]) => id);
   S.settings = await api('/api/settings', { method: 'POST', body: patch });
   $('#sKey').value = '';
   fillSettingsForm();
-  if (Object.keys(patch.tts_services || {}).length) loadVoices();     // a voice service key was entered: its voices must be added to the dropdowns
+  // a voice service key was entered, or the paid services were switched on / off: the voice dropdowns change
+  if (Object.keys(patch.tts_services || {}).length || paidNow !== paidWas) loadVoices();
   await loadHealth();
   // these are global defaults. Only if you really changed language / voice in this save are they applied to the open project,
   // otherwise a project already translated to English would silently get the default Chinese voice again.
   const langChanged = !!patch.language && patch.language !== prevLang;
   const voiceChanged = !!patch.voice && patch.voice !== prevVoice;
-  if (S.project && (langChanged || voiceChanged)) {
+  const dialogueOn = S.project && (S.project.settings || {}).dialogue;
+  // and with paid voices off, the open project doesn't keep a paid voice either (Q&A speakers are switched when they are voiced)
+  const freeVoice = S.project && !paidNow && !dialogueOn && paidVoice(S.project.voice) ? S.voiceDefaults[S.project.language] : '';
+  let projectVoiceChanged = false;
+  if (S.project && (langChanged || voiceChanged || freeVoice)) {
     const body = {};
     if (langChanged) body.language = patch.language;
     if (voiceChanged) body.voice = patch.voice;
+    if (freeVoice && !voiceChanged) body.voice = freeVoice;
+    projectVoiceChanged = !!body.voice && body.voice !== S.project.voice && !dialogueOn;
     await api('/api/projects/' + S.project.id, { method: 'PATCH', body });
     await refreshProject();
   }
-  toast(t('设置已保存'));
+  // a voice service's key was just saved, but no voice of that service is in use: its voices are only used once one of them is chosen.
+  // Say so and stay on the voice list, instead of a plain "saved" that leaves the free voice doing the work
+  const inUse = (id) => [S.settings.voice, S.project && S.project.voice].some(v => (v || '').startsWith(id + ':'));
+  const unused = paidNow && newKeys.find(id => !inUse(id));
+  if (unused) {
+    const svc = (S.settings.tts_services || []).find(s => s.id === unused);
+    toast(t('{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。',
+      { service: svc ? svc.name : unused }), true);
+    $('#sVoice').scrollIntoView({ block: 'center' });
+    $('#sVoice').focus();
+    return;
+  }
+  const notes = [];
+  if (paidWas && !paidNow) notes.push(t('付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。'));
+  if (projectVoiceChanged) notes.push(t('当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。'));
+  toast(notes.length ? notes.join(' ') : t('设置已保存'));
   $('#mSettings').classList.add('hidden');
 }
 
@@ -1613,6 +1642,7 @@ function bindUI() {
       s.audio = r.audio; s.audio_duration = r.duration; s.voice_source = 'tts';
       renderInspector();
       S.audio.src = fileUrl('audio', r.audio) + '?t=' + Date.now(); S.audio.play().catch(() => {});
+      if (r.warning) toast(r.warning, true);           // read by this computer's own voice because the online voice failed
     } catch (e) { toast(e.message, true); }
     $('#btnStepTTS').disabled = false;
   };

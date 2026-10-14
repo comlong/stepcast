@@ -27,7 +27,7 @@ TESTS = ["test_regress", "test_i18n", "test_i18n_core", "test_outro", "test_llm"
          "test_review2", "test_encoder_fallback", "test_stability", "test_reveal_unit", "test_switch_lang",
          "test_dialogue", "test_llm_cn", "test_tts_cloud", "test_review3", "test_second_subs", "test_notes_lang",
          "test_languages", "test_video_first", "test_upload_delete", "test_slide_timeline", "test_slide_anim_render", "test_playback",
-         "test_tts_parallel"]
+         "test_tts_parallel", "test_closeup"]
 BAD = re.compile(r"\[FAIL\]|Traceback \(most recent call last\)|失败 \d+ 项|结果: 失败|有 \d+ 处不一致")
 
 

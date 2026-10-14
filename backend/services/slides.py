@@ -452,7 +452,7 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
 
     if progress:
         progress(1.0, i18n.t("完成，进入编辑器"))
-    warning = "\n\n".join(w for w in [warning, *warnings] if w)
+    warning = "\n\n".join(w for w in [warning, *warnings, (voiced or {}).get("warning", "")] if w)
     return {"project_id": proj.id, "slides": len(slides), "script": res, "tts": voiced, "warning": warning}
 
 

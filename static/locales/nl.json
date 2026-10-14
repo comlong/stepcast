@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Beluisteren",
   "🔒 打码": "🔒 Afschermen",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} is onderbroken: de lokale dienst is opnieuw gestart. Klik nog een keer",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "De lokale dienst is niet bereikbaar – StepCast is misschien gesloten. Start StepCast opnieuw en klik daarna nog een keer"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "De lokale dienst is niet bereikbaar – StepCast is misschien gesloten. Start StepCast opnieuw en klik daarna nog een keer",
+  "{n} 段没能配音：{error}": "{n, plural, one {# alinea heeft} other {# alinea's hebben}} geen voice-over: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "De online stem was deze keer niet bereikbaar, daarom {n, plural, one {is # alinea} other {zijn # alinea's}} voorgelezen met de stem van deze computer (lagere kwaliteit). Klik later nog eens op ‘② Voice-over genereren’, dan {n, plural, one {wordt die} other {worden die}} automatisch opnieuw ingesproken met de gekozen stem.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "deze computer heeft geen Windows-stem voor {lang} om in te vallen",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "De sleutel voor {service} is opgeslagen. Kies onder ‘Stem’ een stem die met ‘{service}’ begint en klik nog eens op ‘Opslaan’ om hem te gebruiken.",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Dit project gebruikt nu de nieuwe stem. Klik op ‘② Voice-over genereren’, dan worden ook de stappen die al ingesproken zijn opnieuw met deze stem ingesproken.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Betaalde stemmen staan uit: vanaf nu worden alleen de gratis Edge-stemmen gebruikt. Je sleutels blijven bewaard.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "De betaalde spraakdiensten staan uit (⚙ Instellingen → Voice-over); nu worden alleen de gratis Edge-stemmen gebruikt",
+  "使用付费配音服务": "Betaalde spraakdiensten gebruiken",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Uit = alleen de gratis Edge-stemmen worden gebruikt. Je sleutels blijven bewaard, dus je kunt het altijd weer aanzetten."
 }

@@ -18,8 +18,11 @@
   pointer-events: auto;
 }
 
+/* hidden for a screenshot: at once, without the fade (a fading overlay was still in the picture) */
 #vt-overlay.vt-invisible {
   opacity: 0 !important;
+  visibility: hidden !important;
+  transition: none !important;
   pointer-events: none;
 }
 

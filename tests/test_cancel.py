@@ -119,7 +119,7 @@ TONE = subprocess.run([shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i
                        "-f", "mp3", "pipe:1"], capture_output=True, check=True).stdout
 
 
-def real_synth(text, voice, out_path, rate="", volume="", pitch=""):
+def real_synth(text, voice, out_path, rate="", volume="", pitch="", used=None):
     """Offline stand-in for the voice service (a one-second tone), so the timing below doesn't depend on the network."""
     out_path.write_bytes(TONE)
     return 1.0, []

@@ -286,6 +286,14 @@ class StepRenderer:
         self.point = self._click_point()                     # click point (canvas coordinates)
         self.prev_point = prev_point or (self.W * 0.5, self.H * 0.92)
         self.stage = self._build_stage()
+        # Close-ups are cut from a base image drawn at the close-up's own scale, from the full-size screenshot: enlarging the frame-sized
+        # base image would only blow up the already shrunk picture, and the page's text would stay a blur however close the camera goes.
+        self.zoom_max = self._zoom_max()
+        self.stage_hi, self.stage_z = None, 1.0
+        if self.shot is not None and self.zoom_max > 1.02:
+            z = min(self.zoom_max, self.shot.size[0] / max(1, self.draw_box[2] - self.draw_box[0]))
+            if z > 1.05:
+                self.stage_hi, self.stage_z = self._build_stage_at(z), z
         # Slide reveal: not on redacted slides (the item images are unredacted originals); broken data falls back to the whole slide at once
         self.reveal = None
         if (self.is_slide and step.kind == "slide" and step.reveal is not None and not step.redactions
@@ -536,20 +544,49 @@ class StepRenderer:
         return canvas
 
     # -- zoom --
+    READ_SCALE = 0.75      # in a close-up a pixel of the page (CSS) becomes at least this many video pixels: 14 px text is about 10 px or more
+    ZOOM_LIMIT = 3.0
+
+    def _css_scale(self) -> float:
+        """Video pixels per page pixel (CSS) when the whole screenshot is shown."""
+        if not self.shot:
+            return 0.0
+        css_w = self.step.viewport_w or self.shot.size[0] / self._img_ratio()
+        return (self.draw_box[2] - self.draw_box[0]) / max(1.0, css_w)
+
+    def _zoom_max(self) -> float:
+        """How close the camera gets for this step (1.0 = no close-up)."""
+        th = self.theme
+        if self.is_slide or not (th.zoom and self.step.zoom and self.target):
+            return 1.0                      # no camera moves on slides
+        tx0, ty0, tx1, ty1 = self.target
+        tw, thh = max(tx1 - tx0, 1.0), max(ty1 - ty0, 1.0)
+        # the smaller the target, the closer the zoom, capped at zoom_factor
+        s = min(th.zoom_factor, self.W / (tw * 3.2), self.H / (thh * 3.2))
+        # and at least close enough to read the page: a very wide browser window (a large monitor) or a small video makes its text
+        # tiny. This may go past zoom_factor, but the target stays well inside the picture
+        css = self._css_scale()
+        if css > 0:
+            s = max(s, min(self.READ_SCALE / css, self.ZOOM_LIMIT, self.W / (tw * 1.4), self.H / (thh * 1.4)))
+        return max(1.0, s)
+
+    def _build_stage_at(self, z: float) -> Image.Image:
+        """The base image drawn z times larger (frame, shadow, dimming all in proportion), for close-ups."""
+        saved = (self.W, self.H, self.draw_box, self.target)
+        try:
+            self.W, self.H = int(round(self.W * z)), int(round(self.H * z))
+            self.draw_box = tuple(int(round(v * z)) for v in saved[2])
+            self.target = tuple(v * z for v in saved[3]) if saved[3] else None
+            return self._build_stage()
+        finally:
+            self.W, self.H, self.draw_box, self.target = saved
+
     def _zoom_at(self, t: float) -> Tuple[float, float, float]:
         """Returns (scale, crop_x0, crop_y0)."""
-        th = self.theme
-        if self.is_slide:
-            return (1.0, 0.0, 0.0)          # no camera moves on slides
-        if not (th.zoom and self.step.zoom and self.target):
-            return (1.0, 0.0, 0.0)
-        # the smaller the target, the closer the zoom, capped at zoom_factor
-        tx0, ty0, tx1, ty1 = self.target
-        tw, thh = tx1 - tx0, ty1 - ty0
-        want = min(self.W / max(tw * 3.2, 1), self.H / max(thh * 3.2, 1))
-        smax = max(1.0, min(th.zoom_factor, want))
+        smax = getattr(self, "zoom_max", 1.0)
         if smax <= 1.02:
             return (1.0, 0.0, 0.0)
+        tx0, ty0, tx1, ty1 = self.target
 
         ramp = 0.9
         hold_out = 0.5
@@ -599,8 +636,14 @@ class StepRenderer:
         s, ox, oy = self._zoom_at(t)
         if s > 1.001:
             cw, ch = self.W / s, self.H / s
-            img = self.stage.crop((int(ox), int(oy), int(ox + cw), int(oy + ch)))
-            img = img.resize((self.W, self.H), Image.BILINEAR)
+            if self.stage_hi is not None:           # from the detailed base image (see __init__)
+                z = self.stage_z
+                img = self.stage_hi.crop((int(ox * z), int(oy * z), int((ox + cw) * z), int((oy + ch) * z)))
+                if img.size != (self.W, self.H):
+                    img = img.resize((self.W, self.H), Image.BILINEAR, reducing_gap=2.0)
+            else:
+                img = self.stage.crop((int(ox), int(oy), int(ox + cw), int(oy + ch)))
+                img = img.resize((self.W, self.H), Image.BILINEAR)
         else:
             img = self.stage.copy()
             s, ox, oy = 1.0, 0.0, 0.0

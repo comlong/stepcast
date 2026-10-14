@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Escuchar",
   "🔒 打码": "🔒 Ocultar",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} se interrumpió: el servicio local se reinició. Vuelve a hacer clic",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "No se puede conectar con el servicio local: puede que StepCast se haya cerrado. Vuelve a iniciar StepCast y haz clic de nuevo"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "No se puede conectar con el servicio local: puede que StepCast se haya cerrado. Vuelve a iniciar StepCast y haz clic de nuevo",
+  "{n} 段没能配音：{error}": "{n, plural, one {# párrafo no tiene} other {# párrafos no tienen}} voz: {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "Esta vez no se pudo conectar con la voz en línea, así que {n, plural, one {# párrafo se leyó} other {# párrafos se leyeron}} con la voz de este equipo (menor calidad). Vuelve a hacer clic en «② Generar voz» más tarde y {n, plural, one {se volverá} other {se volverán}} a generar automáticamente con la voz elegida.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "este equipo no tiene una voz de Windows para {lang} que la sustituya",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "La clave de {service} está guardada. Para usarla, elige en «Voz» una voz que empiece por «{service}» y vuelve a hacer clic en «Guardar».",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Este proyecto usa ahora la nueva voz. Haz clic en «② Generar voz» y también los pasos que ya tienen voz se volverán a generar con ella.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Las voces de pago están desactivadas: a partir de ahora solo se usan las voces gratuitas de Edge. Tus claves siguen guardadas.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "Los servicios de voz de pago están desactivados (⚙ Ajustes → Voz); ahora solo se usan las voces gratuitas de Edge",
+  "使用付费配音服务": "Usar servicios de voz de pago",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Desactivado, solo se usan las voces gratuitas de Edge. Tus claves siguen guardadas, así que puedes volver a activarlo cuando quieras."
 }

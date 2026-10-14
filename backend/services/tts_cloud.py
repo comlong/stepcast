@@ -301,10 +301,19 @@ def _cached_voices(cache_key: str, load: Callable[[], List[Dict[str, Any]]], fal
     return hit[1]
 
 
+def paid_on(cfg: Optional[Dict[str, Any]] = None) -> bool:
+    """The paid voice services are switched on (Settings). Off = only the free Edge voices are listed and used, whatever keys are saved."""
+    cfg = cfg if cfg is not None else config.load()
+    return cfg.get("tts_paid_enabled", True) is not False
+
+
 def voices(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-    """Voices of the services that have a key (others aren't listed). MiniMax's full list is fetched online and cached for an hour."""
+    """Voices of the services that have a key (others aren't listed). MiniMax's full list is fetched online and cached for an hour.
+    Nothing while the paid services are switched off."""
     cfg = cfg if cfg is not None else config.load()
     out: List[Dict[str, Any]] = []
+    if not paid_on(cfg):
+        return out
     if api_key("doubao", cfg):
         out += [_entry("doubao", v, n, g, loc) for v, n, g, loc in DOUBAO_VOICES]
         for vid in extra_voices("doubao", cfg):

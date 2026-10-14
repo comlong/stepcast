@@ -810,5 +810,14 @@
   "🔊 试听": "🔊 Écouter",
   "🔒 打码": "🔒 Masquer",
   "{label}中断了：本地服务重新启动过。请再点一次": "{label} a été interrompu : le service local a redémarré. Cliquez à nouveau",
-  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Impossible de joindre le service local : StepCast a peut-être été fermé. Relancez StepCast, puis cliquez à nouveau"
+  "连不上本地服务，StepCast 可能已经关闭。请重新启动 StepCast，然后再点一次": "Impossible de joindre le service local : StepCast a peut-être été fermé. Relancez StepCast, puis cliquez à nouveau",
+  "{n} 段没能配音：{error}": "{n, plural, one {# paragraphe n'a} other {# paragraphes n'ont}} pas de voix : {error}",
+  "在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。": "La voix en ligne était injoignable cette fois : {n, plural, one {# paragraphe a été lu} other {# paragraphes ont été lus}} par la voix de cet ordinateur (qualité moindre). Cliquez plus tard à nouveau sur « ② Générer la voix » et {n, plural, one {il sera} other {ils seront}} automatiquement refait{n, plural, one {} other {s}} avec la voix choisie.",
+  "这台电脑没有 {lang} 的 Windows 语音可以代替": "cet ordinateur n'a pas de voix Windows pour {lang} pour la remplacer",
+  "{service} 的 Key 已保存。要用它配音，请在「配音音色」里选一个「{service}」开头的音色，再点保存。": "La clé {service} est enregistrée. Pour l'utiliser, choisissez sous « Voix » une voix qui commence par « {service} », puis cliquez à nouveau sur « Enregistrer ».",
+  "当前项目改用新的音色了。点「② 合成语音」，已经配好的步骤也会用新音色重新配音。": "Ce projet utilise maintenant la nouvelle voix. Cliquez sur « ② Générer la voix » : les étapes déjà sonorisées seront refaites avec elle.",
+  "付费配音已关闭，之后只用免费的 Edge 语音；已填的 Key 保留着。": "Les voix payantes sont désactivées : seules les voix Edge gratuites sont utilisées désormais. Vos clés restent enregistrées.",
+  "付费配音服务已关闭（⚙ 设置 → 配音），现在只用免费的 Edge 语音": "Les services vocaux payants sont désactivés (⚙ Paramètres → Voix) ; seules les voix Edge gratuites sont utilisées",
+  "使用付费配音服务": "Utiliser les services vocaux payants",
+  "关掉后只用免费的 Edge 语音；已填的 Key 会保留，以后打开就能接着用。": "Désactivé, seules les voix Edge gratuites sont utilisées. Vos clés restent enregistrées : vous pouvez réactiver à tout moment."
 }

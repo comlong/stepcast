@@ -8,8 +8,8 @@ pydantic>=2.6
 requests>=2.31          # DeepSeek / OpenAI / Mistral / Gemini / Azure / Ollama (OpenAI-compatible protocol)
 anthropic>=1.6,<2       # Claude
 
-# Speech synthesis (Microsoft Edge neural voices, free)
-edge-tts>=6.1.9
+# Speech synthesis (Microsoft Edge neural voices, free); 7.3.0+ sends the service's newer token (older versions are refused: HTTP 403)
+edge-tts>=7.3.1
 # offline fallback (Windows SAPI5)
 pyttsx3>=2.90
 

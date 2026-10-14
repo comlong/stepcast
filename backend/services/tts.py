@@ -14,7 +14,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from .. import config, i18n
 from ..models import Project, Step
@@ -79,6 +79,18 @@ class TTSError(RuntimeError):
 
 def default_voice(language: str) -> str:
     return DEFAULT_VOICES.get(language, DEFAULT_VOICES.get(language.split("-")[0], "en-US-AriaNeural"))
+
+
+def free_voice_for(voice: str, language: str, male: bool = False) -> str:
+    """The voice that really reads: while the paid voice services are switched off, a paid voice is replaced by the free Edge voice
+    for the narration language (the male one for the Q&A expert), so nothing is ever sent to a paid service then."""
+    from . import tts_cloud
+    if not tts_cloud.is_cloud(voice) or tts_cloud.paid_on():
+        return voice
+    if male:
+        from .dialogue import male_voice
+        return male_voice(language)
+    return default_voice(language)
 
 
 def _run_async(coro):
@@ -165,17 +177,50 @@ EDGE_RETRY_WAIT = 0.6        # seconds; the n-th retry waits n times this
 # use goes to one thread of its own (a daemon: a stuck engine must not keep the program from closing), one at a time, and is never waited
 # for longer than SAPI_TIMEOUT; if it ever hangs, it isn't tried again until the program restarts (the paragraph is reported as failed).
 SAPI_TIMEOUT = 90.0
-_sapi_jobs: "queue.Queue[Tuple[str, Path, threading.Event, List[BaseException]]]" = queue.Queue()
+_sapi_jobs: "queue.Queue[Tuple[str, Path, str, threading.Event, List[BaseException], List[str]]]" = queue.Queue()
 _sapi_state: Dict[str, Any] = {"stuck": False, "thread": None}
 _sapi_lock = threading.Lock()
+# audio_voice of a paragraph that Windows' offline voice read because the online voice failed: it is voiced again the next time
+FALLBACK = "sapi:"
 
 
-def _sapi_run(text: str, out_path: Path) -> None:
+def voice_lang(voice: str) -> str:
+    """The language of a voice id: "zh-CN-XiaoxiaoNeural" -> "zh-CN" ("" when the id doesn't say)."""
+    parts = (voice or "").split("-")
+    return "-".join(parts[:2]) if len(parts) >= 2 and len(parts[0]) in (2, 3) else ""
+
+
+def _sapi_pick(voices: Sequence[Any], lang: str) -> Optional[Any]:
+    """The installed Windows voice for a language: one for the same locale, otherwise one for the same language. None when there is
+    none: a voice for another language doesn't read it (an English voice skips every Chinese character and reads only the Latin words)."""
+    want = lang.lower().replace("_", "-")
+
+    def langs(v: Any) -> List[str]:
+        out = []
+        for code in getattr(v, "languages", None) or []:
+            code = code.decode("ascii", "ignore") if isinstance(code, bytes) else str(code)
+            out.append(code.lower().replace("_", "-"))
+        return out
+    for same in (lambda c: c == want, lambda c: c.split("-")[0] == want.split("-")[0]):
+        for v in voices:
+            if any(same(c) for c in langs(v)):
+                return v
+    return None
+
+
+def _sapi_run(text: str, out_path: Path, lang: str) -> str:
+    """Read the text with the Windows voice for the language; returns that voice's name."""
     import pyttsx3
     engine = pyttsx3.init()
+    v = _sapi_pick(engine.getProperty("voices") or [], lang) if lang else None
+    if lang and v is None:
+        raise TTSError(i18n.t("这台电脑没有 {lang} 的 Windows 语音可以代替", lang=lang))
+    if v is not None:
+        engine.setProperty("voice", v.id)
     engine.save_to_file(text, str(out_path))
     engine.runAndWait()
     engine.stop()
+    return getattr(v, "name", "") or "SAPI5"
 
 
 def _sapi_worker() -> None:
@@ -185,34 +230,38 @@ def _sapi_worker() -> None:
     except Exception:
         pass
     while True:
-        text, out_path, done, err = _sapi_jobs.get()
+        text, out_path, lang, done, err, res = _sapi_jobs.get()
         try:
-            _sapi_run(text, out_path)
+            res.append(_sapi_run(text, out_path, lang))
         except BaseException as e:   # noqa: BLE001 - handed to the caller
             err.append(e)
         finally:
             done.set()
 
 
-def _pyttsx3_synth(text: str, out_path: Path) -> None:
+def _pyttsx3_synth(text: str, out_path: Path, lang: str = "") -> str:
+    """Windows' offline voice for the language (lang "" = the default voice); returns the name of the voice that read it."""
     if _sapi_state["stuck"]:
         raise TTSError(i18n.t("SAPI5 也没有生成音频"))
     with _sapi_lock:
         if _sapi_state["thread"] is None:
             _sapi_state["thread"] = threading.Thread(target=_sapi_worker, name="sapi5", daemon=True)
             _sapi_state["thread"].start()
-    done, err = threading.Event(), []
-    _sapi_jobs.put((text, out_path, done, err))
+    done, err, res = threading.Event(), [], []
+    _sapi_jobs.put((text, out_path, lang, done, err, res))
     if not done.wait(SAPI_TIMEOUT):
         _sapi_state["stuck"] = True
         raise TTSError(i18n.t("SAPI5 也没有生成音频"))
     if err:
         raise err[0]
+    return res[0] if res else "SAPI5"
 
 
 def synth(text: str, voice: str, out_path: Path,
-          rate: str = "", volume: str = "", pitch: str = "") -> Tuple[float, List[Dict[str, float]]]:
-    """Synthesise speech; returns (duration in seconds, word boundaries). Voices with a service prefix (doubao: / minimax: / qwen: / gemini: / elevenlabs: / azure:) go to the paid services."""
+          rate: str = "", volume: str = "", pitch: str = "",
+          used: Optional[Dict[str, str]] = None) -> Tuple[float, List[Dict[str, float]]]:
+    """Synthesise speech; returns (duration in seconds, word boundaries). Voices with a service prefix (doubao: / minimax: / qwen: / gemini: / elevenlabs: / azure:) go to the paid services.
+    When the free online voice fails, Windows' own voice for the same language reads it instead; used["fallback"] is then that voice's name."""
     text = (text or "").strip()
     if not text:
         raise TTSError(i18n.t("解说文本为空。"))
@@ -244,14 +293,16 @@ def synth(text: str, voice: str, out_path: Path,
                 time.sleep(EDGE_RETRY_WAIT * (attempt + 1))
     if failed is not None:
         e = failed
-        # fallback: SAPI5 (wav only, no word boundaries)
+        # fallback: SAPI5 in the narration's language (wav only, no word boundaries)
         wav = part.with_suffix(".wav")
         try:
-            _pyttsx3_synth(text, wav)
+            name = _pyttsx3_synth(text, wav, voice_lang(voice))
             if wav.exists() and wav.stat().st_size > 512:
                 ffmpeg_util.run(["-i", str(wav), "-codec:a", "libmp3lame",
                                  "-b:a", "192k", str(part)])
                 boundaries = []
+                if used is not None:
+                    used["fallback"] = name
             else:
                 raise TTSError(i18n.t("SAPI5 也没有生成音频"))
         except Exception as e2:
@@ -299,11 +350,14 @@ def card_audio(audio_dir: Path, kind: str, text: str, voice: str = "") -> Option
 
 
 def synth_card(audio_dir: Path, kind: str, text: str, voice: str,
-               rate: str = "", volume: str = "") -> float:
+               rate: str = "", volume: str = "", used: Optional[Dict[str, str]] = None) -> float:
     import json
+    used = {} if used is None else used
     mp3 = audio_dir / f"__{kind}__.mp3"
-    dur, _ = synth(text, voice, mp3, rate, volume)
-    _card_sidecar(audio_dir, kind).write_text(json.dumps({"text": text.strip(), "voice": voice}, ensure_ascii=False),
+    dur, _ = synth(text, voice, mp3, rate, volume, used=used)
+    # read by Windows' fallback voice: recorded as such, so it doesn't count as made with `voice` and is voiced again the next time
+    made_with = FALLBACK + used["fallback"] if used.get("fallback") else voice
+    _card_sidecar(audio_dir, kind).write_text(json.dumps({"text": text.strip(), "voice": made_with}, ensure_ascii=False),
                                               encoding="utf-8")
     return dur
 
@@ -347,6 +401,7 @@ def synth_project(
         voice = dialogue.speaker(proj, "host").voice
     voice = voice or proj.voice or default_voice(proj.language)
     proj.voice = voice
+    voice = free_voice_for(voice, proj.language)          # the project keeps its choice; with paid voices off the free one reads
 
     # a disabled intro / outro isn't in the video, so don't spend time voicing it
     cfg = {**config.load(), **{k: v for k, v in (proj.settings or {}).items() if v is not None}}
@@ -363,36 +418,42 @@ def synth_project(
 
     made = 0
     errors: List[str] = []
+    fell_back: List[str] = []                 # paragraphs Windows' own voice read because the online voice failed
     pending: List[_Para] = []
     for pos, (key, step, text) in enumerate(todo, 1):
         fname = f"{key}.mp3"
         if step is not None:
-            if only_missing and step.audio and (audio_dir / step.audio).exists() and step.audio_duration > 0:
+            # kept only when it was made with the voice in use: audio Windows' fallback voice read (the online voice had failed), or audio of
+            # a voice the project no longer uses (e.g. it was switched to a paid voice), is made again. "" = made by an older version: kept
+            if only_missing and step.audio and (audio_dir / step.audio).exists() and step.audio_duration > 0 \
+                    and (step.audio_voice or voice) == voice:
                 continue
         else:
             if only_missing and card_audio(audio_dir, key.strip("_"), text, voice):
                 continue
         pending.append(_Para(pos, key, step, text, fname, audio_dir / fname))
 
-    def synth_para(para: _Para) -> Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path]]:
+    def synth_para(para: _Para) -> Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path], str]:
         """Runs in a worker thread. A step's voice-over is made in a file of its own; it only replaces the real audio file in take(), together with the
-        step's record (duration, subtitle times), so a paragraph that is dropped (Stop) never leaves new audio next to old times."""
+        step's record (duration, subtitle times), so a paragraph that is dropped (Stop) never leaves new audio next to old times.
+        The last value is the Windows voice that read it when the online voice failed ("" normally)."""
+        used: Dict[str, str] = {}
         if para.step is None:
-            return synth_card(audio_dir, para.key.strip("_"), para.text, voice, rate, volume), [], [], None
+            return synth_card(audio_dir, para.key.strip("_"), para.text, voice, rate, volume, used), [], [], None, used.get("fallback", "")
         out = para.path.with_name(f"{para.path.stem}.{uuid.uuid4().hex[:6]}.new.mp3")
         try:
             if dialogue_on and para.step.lines:
-                return (*dialogue.synth_lines(proj, para.step, out, rate, volume), out)
-            dur, bounds = synth(para.text, voice, out, rate, volume)
-            return dur, bounds, [], out
+                return (*dialogue.synth_lines(proj, para.step, out, rate, volume, used=used), out, used.get("fallback", ""))
+            dur, bounds = synth(para.text, voice, out, rate, volume, used=used)
+            return dur, bounds, [], out, used.get("fallback", "")
         except BaseException:
             out.unlink(missing_ok=True)
             raise
 
-    def take(para: _Para, res: Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path]]) -> None:
+    def take(para: _Para, res: Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path], str]) -> None:
         """Back in the calling thread: the new audio file and the step's record change together."""
         nonlocal made
-        dur, bounds, times, new = res
+        dur, bounds, times, new, fallback = res
         if new is not None:
             try:
                 storage._replace_with_retry(new, para.path)
@@ -401,9 +462,12 @@ def synth_project(
                 errors.append(f"[{para.key}] {e}")
                 return
         made += 1
+        if fallback:
+            fell_back.append(para.key)
         if para.step is not None:
             para.step.audio = para.fname
             para.step.voice_source = "tts"
+            para.step.audio_voice = FALLBACK + fallback if fallback else voice
             para.step.audio_duration = dur
             para.step.boundaries = bounds
             para.step.line_times = times
@@ -451,7 +515,15 @@ def synth_project(
     if progress:
         progress(1.0, i18n.t("语音完成，共生成 {n} 段，{failed} 段失败", n=made, failed=len(errors)) if errors
                  else i18n.t("语音完成，共生成 {n} 段", n=made))
-    return {"generated": made, "total": len(todo), "errors": errors, "voice": voice}
+    # both are said plainly in the job's result: a voice-over that sounds wrong or is missing must not look like a normal "done"
+    notes = []
+    if fell_back:
+        notes.append(i18n.t("在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。",
+                            n=len(fell_back)))
+    if errors:
+        notes.append(i18n.t("{n} 段没能配音：{error}", n=len(errors), error=errors[0].split("] ", 1)[-1][:300]))
+    return {"generated": made, "total": len(todo), "errors": errors, "voice": voice, "fallback": len(fell_back),
+            "warning": "\n\n".join(notes)}
 
 
 # A full stop ends a sentence only when nothing glues it to the next word: a space after it, or a capital letter / Chinese character directly

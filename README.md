@@ -131,7 +131,7 @@ Keys are kept in the local `config.json`; the interface and API only show masked
 
 ### More voice services (optional, paid)
 
-Edge voices are free and the default. For more natural voices, add a key under **⚙ Settings → AI & voice → Voice-over → More voice services**. That service's voices then appear in every voice dropdown (prefixed with the service name) and can be mixed freely, including for the two speakers in Q&A mode:
+Edge voices are free and the default. For more natural voices, add a key under **⚙ Settings → AI & voice → Voice-over → More voice services**. That service's voices then appear in every voice dropdown (prefixed with the service name) and can be mixed freely, including for the two speakers in Q&A mode. **Adding a key doesn't replace the voice in use**: choose one of that service's voices under "Voice" and save (when only a key was saved, Settings stays on the voice list and says so); after the open project's voice changes, **② Generate voice-over** voices the steps already voiced again with the new voice, no need to delete them first. **To use only the free Edge voices**, switch off **⚙ Settings → Voice-over → Use paid voice services**: the paid voices leave the lists, a paid voice in use goes back to the free voice for the language, and every project is voiced with the free Edge voices (the Q&A expert with the free male voice). The keys stay saved, so you can switch back on any time:
 
 | Service | Strengths | Key |
 |---|---|---|
@@ -395,18 +395,19 @@ Parallel and serial output are pixel-identical. To control it manually, set `"vi
 
 ## Video style
 
-**⚙ Settings → Video style:** resolution / frame rate (default 1920×1080 / 30; 720p, 2K and portrait 1080×1920 too), accent color (`#FF5C39`), automatic zoom and its factor, dimming outside the highlight, cursor animation, browser frame, **Burn subtitles into the video**, **Leave room for second-language subtitles**, and minimum step duration (2.5 s; actual = max(this, voice-over + padding)). Zoom, highlight and duration can also be set per step.
+**⚙ Settings → Video style:** resolution / frame rate (default 1920×1080 / 30; 720p, 2K and portrait 1080×1920 too), accent color (`#FF5C39`), automatic zoom and its factor (when the page's text would be too small in the picture — a very wide browser window, a small video — the camera goes closer so it stays readable, up to 3×, with the action area kept in view; close-ups are taken from the full-size screenshot, so the closer the sharper), dimming outside the highlight, cursor animation, browser frame, **Burn subtitles into the video**, **Leave room for second-language subtitles**, and minimum step duration (2.5 s; actual = max(this, voice-over + padding)). Zoom, highlight and duration can also be set per step.
 
 ---
 
 ## FAQ
 
 - **Extension says "not connected"** — start `run.bat` / `StepCast.exe` first. If you changed the port, update the server address in the extension's settings
-- **The "● Recording" badge appears in a screenshot** — it's normally hidden automatically; delete the step and redo it, or take one with `Alt+Shift+S`
+- **The "● Recording" badge appears in a screenshot** — it is hidden at once before each screenshot, and the screenshot waits until the page has been painted (older versions faded it out and often caught it halfway). After updating, click the extension's reload button in `chrome://extensions`. In screenshots already taken, cover it with **🔒 Redact** or redo the step
+- **The page's text can't be read in the video** — the video is 16:9, so a very wide browser window (e.g. maximised on an ultrawide monitor) is shrunk a lot. Before recording, make the browser window about 1600–1920 pixels wide and use 1080p (⚙ Settings → Video style). Close-ups zoom in far enough to read the text, but steps without a click position (e.g. opening a page) aren't zoomed
 - **Some screenshots lag behind fast clicks** — Chrome allows about two screenshots per second; slow down a little
 - **The highlight box is off** — drag the orange box in the editor; drag its corner to resize
 - **Actions inside iframes aren't recorded** — only the top-level page is captured; use `Alt+Shift+S` and write the narration yourself
-- **Voice-over failed** — edge-tts needs internet; offline, Windows SAPI5 voices are used (lower quality, no word timing)
+- **Voice-over failed or sounds wrong** — edge-tts needs internet. When it can't connect (offline, or the service refuses), this computer's Windows voice for the **same language** reads instead (lower quality, no word timing), and the result says which paragraphs; click **② Generate voice-over** again later and they are voiced again with the chosen voice automatically. Without a Windows voice for that language those paragraphs fail instead of being read by a voice for another language (an English voice reading Chinese says only the English words in it). Microsoft changes how the free service is reached now and then, and an old edge-tts is then refused every time (HTTP 403): run `setup.bat` again (or `pip install -U edge-tts`), or use a newer exe version
 - **Chinese characters show as boxes** — set `font_path` in `config.json` to a font that has them (default is `C:\Windows\Fonts\msyh.ttc`)
 - **403 "only 127.0.0.1 / localhost"** — the app only accepts local requests so that websites you visit can't read your projects. To use it from another computer on your network, `set VT_ALLOWED_HOSTS=<host name>` and start with `python app.py --host 0.0.0.0`
 - **"Narrate while recording" captured no sound** — check permission, device and the level meter under **Microphone settings** in the popup
