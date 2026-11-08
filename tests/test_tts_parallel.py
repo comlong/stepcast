@@ -354,7 +354,7 @@ finally:
 edge_lists = [0]
 
 
-async def flaky_list():
+async def flaky_list(**kw):          # the real one takes proxy= / connector=
     edge_lists[0] += 1
     if edge_lists[0] <= 2:
         raise RuntimeError("403")

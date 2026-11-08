@@ -1,6 +1,6 @@
 """Look at second-language subtitles by hand: render a video from the fake recorded project, generate English (italic) and Traditional Chinese (upright) second subtitles
 (hand-written translations, no AI credits) and unpack the web player package. Data goes to tests/_work/ui_data (the ui-test server opens it directly),
-the package to tests/_work/pkg (pkg in .claude/launch.json).
+the package to tests/_work/pkg.
 
     .venv\\Scripts\\python.exe -X utf8 tests\\demo_sub2.py
 """

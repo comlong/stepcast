@@ -158,9 +158,11 @@ def _replace_with_retry(src: Path, dst: Path) -> None:
             time.sleep(0.01 + attempt * 0.005)
 
 
-def save(proj: Project) -> Project:
+def save(proj: Project, touch: bool = True) -> Project:
+    """touch=False keeps the "last changed" time (e.g. only moved to another folder: it doesn't jump to the top of the list)."""
     with _lock_for(proj.id):
-        proj.updated_at = time.time()
+        if touch:
+            proj.updated_at = time.time()
         d = project_dir(proj.id)
         d.mkdir(parents=True, exist_ok=True)
         tmp = d / f"project.{uuid.uuid4().hex[:8]}.tmp"
@@ -172,15 +174,58 @@ def save(proj: Project) -> Project:
     return proj
 
 
-def update(pid: str, fn: Callable[[Project], object]):
+def update(pid: str, fn: Callable[[Project], object], touch: bool = True):
     """Locked read-modify-write. Returns fn's return value if it isn't None, otherwise the project itself."""
     with _lock_for(pid):
         proj = load(pid)
         if proj is None:
             raise KeyError(pid)
         result = fn(proj)
-        save(proj)
+        save(proj, touch=touch)
         return result if result is not None else proj
+
+
+FOLDER_MAX = 60
+
+
+def folder_name(name: str) -> str:
+    """A folder name as stored: spaces at the ends and runs of spaces / line breaks tidied up, at most FOLDER_MAX characters."""
+    return " ".join(str(name or "").split())[:FOLDER_MAX].strip()
+
+
+def set_folder(pid: str, folder: str) -> Project:
+    """Put a project into a folder ("" = take it out of its folder). Its "last changed" time stays."""
+    name = folder_name(folder)
+
+    def _do(p: Project):
+        p.folder = name
+    return update(pid, _do, touch=False)
+
+
+def rename_folder(old: str, new: str) -> int:
+    """Rename a folder (new "" = dissolve it: its projects go back to the top level, nothing is deleted). Returns how many projects moved."""
+    old, new = folder_name(old), folder_name(new)
+    if not old or old == new:
+        return 0
+
+    def _do(p: Project) -> bool:
+        if p.folder != old:          # moved elsewhere in the meantime: left where the user put it
+            return False
+        p.folder = new
+        return True
+    config.ensure_dirs()
+    n = 0
+    for d in config.DATA_DIR.iterdir():
+        if not d.is_dir() or not valid_pid(d.name):
+            continue
+        proj = load(d.name)          # a quick look first, so projects in other folders aren't written at all
+        if proj is None or proj.folder != old:
+            continue
+        try:
+            n += bool(update(proj.id, _do, touch=False))
+        except KeyError:             # deleted in the meantime
+            pass
+    return n
 
 
 def commit(pid: str, before: Project, after: Project,
@@ -241,6 +286,7 @@ def list_projects() -> List[dict]:
         out.append({
             "id": proj.id,
             "name": proj.name,
+            "folder": proj.folder,
             "created_at": proj.created_at,
             "updated_at": proj.updated_at,
             "steps": len(proj.steps),

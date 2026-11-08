@@ -1,6 +1,7 @@
 """Locating ffmpeg and common call wrappers.
 
-ffmpeg from the system PATH is preferred; otherwise fall back to the binary bundled with imageio-ffmpeg.
+Order: an ffmpeg put into the `ffmpeg` folder of StepCast's home (the work folder of the assistant skill's installation,
+when the download failed), then the system PATH, then the binary bundled with imageio-ffmpeg.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ import time
 from functools import lru_cache
 from pathlib import Path
 
-from .. import i18n
+from .. import config, i18n
 from typing import List, Optional, Tuple
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
@@ -22,22 +23,36 @@ class FFmpegError(RuntimeError):
     pass
 
 
+def home_ffmpeg() -> Optional[str]:
+    """ffmpeg in <home>/ffmpeg (directly or in a build's bin folder unpacked there)."""
+    d = config.BASE_DIR / "ffmpeg"
+    if not d.is_dir():
+        return None
+    found = sorted(d.rglob("ffmpeg.exe" if os.name == "nt" else "ffmpeg"), key=lambda p: len(p.parts))
+    return str(found[0]) if found else None
+
+
 @lru_cache(maxsize=1)
 def ffmpeg_bin() -> str:
-    exe = shutil.which("ffmpeg")
+    exe = home_ffmpeg() or shutil.which("ffmpeg")
     if exe:
         return exe
     try:
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception as e:
-        raise FFmpegError(i18n.t(
-            "未找到 ffmpeg。请安装后重试：winget install Gyan.FFmpeg\n或执行 pip install imageio-ffmpeg 使用内置版本。原因：{error}",
-            error=e))
+        # no install advice that changes PATH (company computers often don't allow it): the home's ffmpeg folder is enough
+        raise FFmpegError(i18n.t("未找到 ffmpeg。请把 ffmpeg.exe 放进 {folder}，然后重启 StepCast。原因：{error}",
+                                 folder=config.BASE_DIR / "ffmpeg", error=e))
 
 
 @lru_cache(maxsize=1)
 def ffprobe_bin() -> Optional[str]:
+    home = home_ffmpeg()
+    if home:
+        p = Path(home).with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+        if p.exists():
+            return str(p)
     exe = shutil.which("ffprobe")
     if exe:
         return exe

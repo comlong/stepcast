@@ -50,7 +50,7 @@ except storage.UploadTooLarge as e:
     raised = e.max_bytes == 4096 and "文件太大" in str(e)
 check("超过：马上停下，并把写了一半的文件删掉", raised and not dst.exists())
 check("大小的写法", [storage.size_label(x) for x in (2 * 1024 ** 3, 80 * 1024 ** 2, 200 * 1024 ** 2)] == ["2 GB", "80 MB", "200 MB"])
-check("各类上传都有上限", len(main.UPLOAD_LIMITS) == 7 and all(m > 0 for _, m in main.UPLOAD_LIMITS))
+check("各类上传都有上限", len(main.UPLOAD_LIMITS) == 8 and all(m > 0 for _, m in main.UPLOAD_LIMITS))
 
 print("\n== 2. 超大上传：不落盘就拒绝（413） ==")
 real_limits = list(main.UPLOAD_LIMITS)

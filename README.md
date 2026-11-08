@@ -19,7 +19,7 @@ Your data stays on your machine. Speech recognition runs locally. Only writing n
 | Write the narration | An AI model writes the video title, intro, and per-step narration and subtitles from the recorded actions |
 | Voice-over | Neural voices from edge-tts (free), or paid voices from Doubao, MiniMax, Qwen-TTS, Google Gemini, ElevenLabs or Azure Speech |
 | Voice input | **Narrate while recording** (your speech is split across the steps automatically), record your own voice per step, upload audio, dictate text |
-| PPT / PDF to video | One step per slide; **points appear as the narration reaches them**; **videos embedded in slides play in place**; **speaker notes used word for word as narration** (or rewritten by AI); pick slides and level of detail |
+| PPT / PDF / HTML to video | One step per slide; **points appear as the narration reaches them**; **videos embedded in slides play in place**; **speaker notes used word for word as narration** (or rewritten by AI); pick slides and level of detail. **HTML decks are recorded moving**, with the clicks their notes ask for |
 | Two-person Q&A | Turn a deck into a **conversation between a host and an expert**: two voices, full content, sounds like two colleagues talking |
 | Highlight actions | Outline + breathing pulse + dimmed background + click ripple + cursor fly-in |
 | Automatic camera | Eases in on the action area and back out to the full view |
@@ -48,7 +48,7 @@ Your data stays on your machine. Speech recognition runs locally. Only writing n
 |---|---|
 | All projects (screenshots, voice-over, videos) | `projects\<project id>\` next to the exe |
 | Rendered videos / subtitles | `projects\<project id>\output\` |
-| Uploaded PPT / PDF files | `projects\_imports\` (cleaned up 48 hours after the project is created) |
+| Uploaded PPT / PDF / HTML files | `projects\_imports\` (cleaned up 48 hours after the project is created); an HTML deck's files also go with its project (`projects\<project id>\web\`) |
 | Settings and API keys | `config.json` next to the exe |
 | Speech recognition model (downloaded on first use, about 465 MB) | `%USERPROFILE%\.cache\huggingface` |
 
@@ -176,6 +176,7 @@ Stopping opens the editor automatically.
 - **Middle:** drag the orange box to adjust the highlight; switch to **Rendered preview** to see the actual video frame
 - **Right column:** edit the on-screen title, narration and subtitle; **AI rewrite** rewrites the current text as you ask; **Note for the AI** is taken into account when writing narration
 - Untick **Include in video** to skip a mistaken step
+- **Many projects**: in **Projects** (top left), the 📁 next to a project puts it into a folder (an existing one, a new one, or out again). Folders come first, closed until you click them; a folder's ⋯ renames or dissolves it (dissolving only moves its projects back out, nothing is deleted). The search box above filters by project or folder name
 - **Watch pages before rendering the whole video:** **▶ Play this page** (above the preview, or the small ▶ on each card) renders just that page the way the final video shows it — animation, voice-over, subtitles, and the videos on it — as a small 720p video and plays it. It works for every page, including pages whose videos the browser itself can't play (wmv, avi, some mov / mkv). **▶ Play in a row** (top of the left column) lets you tick several pages (shift-click for a range, **Select all**, **From this page**) and watch them one after another; the page being played is highlighted in the list. **■ Stop playing** (or Esc) stops the player and cancels a preview that is still being made. Previews never touch the real video or its subtitle files; only the newest three are kept in the project's `preview` folder
 
 **3. Generate.** The bottom bar, left to right:
@@ -229,7 +230,7 @@ In the right column's **Voice-over** card: **🎙 Record my voice** (pick microp
 
 ## PPT / PDF to video
 
-**Projects → 📊 Create from PPT / PDF**:
+**Projects → 📊 Create from PPT / PDF / HTML** (HTML decks: see [HTML decks](#html-decks)):
 
 1. **Upload** a .pptx / .ppt / .pdf (up to 100 slides)
 2. **Pick slides:** thumbnail grid, all non-hidden slides selected by default; slides with notes are marked "Notes", slides without notes "No notes"
@@ -310,6 +311,33 @@ In the editor, **Q&A lines** lists one line per row (switch speaker, play, reord
 
 **How slide images are produced:** with PowerPoint installed, slides are exported exactly as they look (fonts, charts, SmartArt), including old `.ppt`; otherwise LibreOffice; without either, PDFs still work and PPTX falls back to a text-only page — save as PDF first in that case.
 
+### HTML decks
+
+The same entry takes a web page deck: one `.html` file, or a `.zip` of its folder when pictures, styles and scripts are separate files (a whole built web app works too). StepCast opens it in a headless Microsoft Edge on this computer (part of Windows; Chrome is used when Edge is missing) and:
+
+- **Finds the slides,** whatever the deck is made with: `section.slide`-style decks as AI assistants write them (usually a 16:9 stage scaled to the window), reveal.js (fragments and vertical slides included), impress.js, Shower, Swiper-based decks, Marp and remark exports, built Slidev decks and other web apps, decks paged with → / Space, the address (`#slide-3`, `#/3`), a "next" button or a click on the page, long pages scrolled one screen per slide, and one HTML file per slide in a zip (with or without a viewer page around them). A deck it can't read — drawn on a canvas, say — is paged by trying the keys and a click, every new picture on the screen being a slide. A start screen in front of the slides is pressed through
+- **Reads the notes** from `data-notes` (or `data-note`, `data-speaker-notes` …), `<aside class="notes">`, `.notes`, a hidden box of their own (`…-slide-notes`, Marp's presenter notes), an HTML comment inside the slide, a notes panel next to the slide (presenter view), or a list in the deck's own script. They are used as PowerPoint notes are: word for word, rewritten by the AI, or ignored
+- **Takes a still of each slide** — only the slide: arrows, page dots, progress bars, top bars and counters around it are left out, the stage's rounded corners and shadow too — for the thumbnails, the editor and still images. The still shows the whole slide, every part that comes in one at a time included
+- **Keeps the online resources it loads** (fonts, script libraries, pictures) with the project, so recording works offline later and looks the same every time. Fonts that come in pieces (Chinese web fonts) are loaded for every character the deck may show. Pages saved in GBK or another encoding are read correctly. The deck can never reach StepCast's own service or anything else on this computer or the local network
+
+**Recording.** When the video is rendered, each HTML slide is shown on its own in the browser and recorded frame by frame on a virtual clock: CSS animations and transitions, `requestAnimationFrame` drawing (canvas, WebGL, chart libraries), timers, Web Animations, SVG animations, animated GIFs, `<video>` and the deck's own `<iframe>`s all move exactly one frame's time per frame however long a screenshot takes, so the motion is smooth and the same every time. The recording takes the slide's place (same page-turn fade, subtitles below), is reused while nothing it depends on changes, and three slides are recorded at a time (a ten-minute deck takes a few minutes). Redaction boxes drawn on an HTML slide cover its recording too.
+
+**Highlights.** StepCast reads each slide's structure from the page — cards, list items, table rows, captioned pictures. When the narration names one of them, it lights up as the words are spoken: framed in the accent colour, the rest of the slide a little darker, and the highlight moves on with the narration. Only plain mentions count (a wrong highlight is worse than none), and a sentence in which the page itself does something — a click, a part coming in — is left alone. It is on by default; **Highlight what is being explained** in the import dialog and the slide panel switches it off for the project, and each highlight can be changed or deleted in the panel, like a click.
+
+**Clicks.** Interactive decks have buttons, tabs, cards that flip, hotspots… StepCast clicks them while the narration plays:
+
+- **Stage directions in the notes** — a bracket starting with a verb of clicking, such as `(click the "Run demo" button)`, `（点按钮）`, `（依次点 1 到 4 号热点）`, `(Klick auf Start)` — are never read aloud; they become clicks. A direction names the control by its text or aria-label, by its kind ("the cards", "hotspots 1 to 4", "the handle"), or simply "the button" (the slide's only or main button). "In turn" / "one by one" clicks several controls, each when the narration talks about it; one control clicked "in turn" ("click Next in turn") is clicked at "second …", "third …" of the narration. A direction after the last sentence clicks when the narration has ended, and the slide stays until what it started has finished. The same brackets in PowerPoint notes aren't read aloud either
+- **Without directions,** a control is clicked once, when the narration names it plainly (its text or aria-label)
+- **A mouse pointer** moves to each control before the click and shows a click ring (switch it off for the project in the import dialog or the slide panel); hover effects show as on a real screen
+- **Web animations and clicks** in the editor's right column lists each click: at which sentence, what (click / point at / show the next part), where. Change, add or delete them — then they stay as set and follow their sentence when the narration is edited — or click **Re-arrange from notes** to go back to automatic. With **Record this slide's animations and clicks** off, the slide is a still image. **▶ Play this page** shows the result
+- Automatic clicks follow the narration: edit or rewrite it and they move with the words; after a translation into another language they stay in their sentences
+- **Parts that come in one at a time** (reveal.js fragments, Shower's steps, points shown with →) start hidden and come in along the narration — at the sentence that names them, else spread over it
+- **When the AI writes the narration,** it is told the slide's pieces of content and its buttons, which are tried out first to see what each brings up: it can then name a button when a demonstration is worth it (the click follows by itself) and describe what actually appears
+
+In the import dialog, **Animations and clicks of the page** offers: record the animations and click as the notes say (recommended) / record the animations only (no clicks; parts still come in one at a time) / still images (like a PDF). **How should an HTML deck be made to import best?** shows a short list to copy into the AI that writes your deck: one HTML file, one `section.slide` per slide on a 16:9 stage, notes in `data-notes`, directions in brackets, clear names on buttons and cards (and the same words in the notes), → / Space and `#slide-3` for paging, animations that don't depend on the real date and time.
+
+This needs Microsoft Edge or Google Chrome on the computer. Where a company policy forbids controlling the browser (remote debugging), StepCast says so — ask IT to allow it, or use a computer where it is allowed.
+
 ---
 
 ## Redaction
@@ -345,6 +373,18 @@ The main subtitle is burned into the video; second-language subtitles are separa
 - With your own player, use the VTT files (`<track kind="subtitles" srclang="en" label="English" src="….en-US.vtt">`; without `default` it's off initially). The included player is the most accurate
 - After re-rendering (changed narration), older second subtitles are marked "needs regenerating" and left out of the package
 - Videos rendered by old versions have no room for a second subtitle; you'll be asked to render again
+
+## Let an AI assistant do the writing (local API)
+
+An AI assistant running on the same computer (e.g. WorkBuddy, or any agent that can run PowerShell) can turn recordings or PPT / PDF decks into videos through StepCast's local API: StepCast records, imports slides (notes, PowerPoint animations), highlights, voices and renders; the assistant writes every text — which steps or slides to keep, titles, narration, background pages, translations.
+
+- **Skill:** `agent/workbuddy/stepcast-video/` (also in the Windows package): `SKILL.md` with the workflow, `scripts/stepcast.ps1` as the client (Windows PowerShell, nothing to install), `references/` with the API and a narration guide. In WorkBuddy: Skills → Add skill → Upload, or copy the folder to `%USERPROFILE%\.workbuddy\skills\`; it is listed as "StepCast Tutorial Videos". To update the skill, upload it again or replace the folder
+- **Skill with StepCast inside (no StepCast.exe needed):** `packaging\build_skill.py` writes `dist\stepcast-video-<version>.zip` (under 1 MB; WorkBuddy accepts skills up to 100 MB) with StepCast's source, the Chrome extension and the skill. On first use the assistant shows a short notice (what is installed and downloaded, which texts leave the computer), asks whether the computer's network is in mainland China and for a work folder, and runs `stepcast.ps1 setup`: a Python environment built with WorkBuddy's own Python — in mainland China from the Tsinghua / Alibaba Cloud PyPI mirror, elsewhere from the official PyPI, each falling back to the other (about 100 MB to download, 300 MB installed) — ffmpeg from the same source checked against a fixed SHA-256, the program, and `config.json` in the computer's display language (interface, narration language and voice) with the built-in AI off — no DeepSeek account needed. Everything lives in the work folder (settings, projects, videos, `runtime\`, `extension\`, `StepCast.cmd` to start it by double-click); updating the skill replaces only the program. If ffmpeg can't be downloaded, setup uses one already installed on the computer, or one the user downloads in the browser (links for their network; `setup -FfmpegFile <file>`), and puts it into the work folder's `ffmpeg` folder. Nothing outside the work folder is changed — no PATH, no registry. The free online voice uses a proxy when the computer needs one: the environment's or the Windows system proxy (only read), or the proxy of the assistant's sandbox, which the skill's script passes on with every call (`GET /api/network` shows which one). When it still falls back to Windows' own voice, the voice-over result says why (`fallback_reason`). Speech recognition isn't included
+- **Running it in WorkBuddy:** the script runs in the PowerShell tool (WorkBuddy's Bash tool doesn't start PowerShell). JSON and long texts go into UTF-8 files passed with `-File`, because the double quotes inside an argument are lost when one PowerShell starts another
+- **PPT / PDF / HTML:** `stepcast.ps1 import -File deck.pptx -Language en-US` (or `deck.html`, `deck.zip`) creates the project, one step per slide; speaker notes in the narration language become the narration, the other slides stay empty for the assistant to write. No AI, no voice-over yet. An HTML deck's clicks follow the stage directions in its notes; `PUT /api/projects/{pid}/steps/{sid}/web` changes them
+- **Built-in AI off:** ⚙ Settings → AI & voice → **Turn off the built-in AI** (or `POST /api/settings {"ai_disabled": true}`). StepCast then calls no AI model at all; its AI buttons report that the AI is off. Voice-over isn't affected
+- **Endpoints for assistants** (besides the editor's own): copy recorded steps from other projects with optional edge cropping (`POST /api/projects/{pid}/steps/copy`), crop screenshots in place (`…/steps/crop`), insert a picture as a slide (`…/steps/image`), second-language subtitles translated elsewhere (`GET …/subtitles2/sentences`, `POST …/subtitles2/{lang}/import`). The full list is in `agent/workbuddy/stepcast-video/references/api.md`
+- **Subtitle files:** ⚙ Settings → Video style → **Also save the subtitles next to the video** (`sidecar_subtitles`). With burned-in subtitles, turn it off so players don't show them twice; **Download subtitles** still works
 
 ## Narration and subtitle languages
 
@@ -432,7 +472,7 @@ For recorded tutorials, each step sends: the action (click / type / key / naviga
 
 **Voice input** is transcribed locally; the only network access is downloading the model once.
 
-**PPT import:** slide images are never uploaded. With "use the notes as narration", slides whose notes are in the narration language stay completely offline; slides without notes send only their title and text if you let the AI fill them in (no notes); slides whose notes are in another language send title, text and notes so the AI can tell them in the narration language. "AI rewrites the notes" sends title, text and notes of the selected slides. The bottom of the import dialog always shows what will be sent.
+**PPT import:** slide images are never uploaded. With "use the notes as narration", slides whose notes are in the narration language stay completely offline; slides without notes send only their title and text if you let the AI fill them in (no notes); slides whose notes are in another language send title, text and notes so the AI can tell them in the narration language. "AI rewrites the notes" sends title, text and notes of the selected slides. The bottom of the import dialog always shows what will be sent. HTML decks also send the text of the page's content pieces and buttons, and the text a button brings up (text only: no screenshots, no page code).
 
 ---
 
@@ -444,6 +484,7 @@ backend/main.py         FastAPI routes
 backend/storage.py      project files; background jobs merge their results back three-way
 backend/services/       script_gen (narration), llm* (providers), tts / tts_cloud / dialogue (voice-over),
                         video / renderer / textlayout (rendering), slides / slide_reveal / slide_sequence / slide_timeline / clips (PPT import),
+                        webdeck / web_actions / web_page.js / cdp (HTML decks: headless browser, virtual clock, clicks),
                         second_subs (second-language subtitles), asr / voice (speech), redact, cards …
 static/                 editor (plain HTML / CSS / JS) and locales/ (en, de, fr, pl, it, es, nl)
 extension/              Chrome MV3 extension
@@ -459,7 +500,8 @@ tests/                  regression tests
 ## Known limitations
 
 - Only the top-level page is captured (no iframes)
-- It's "screenshots + animation", not screen video — page animations aren't captured, but files are small, frames are clean and every sentence is editable
+- It's "screenshots + animation", not screen video — page animations aren't captured, but files are small, frames are clean and every sentence is editable (HTML decks are the exception: they are recorded moving)
+- HTML decks: sound played by the page itself (Web Audio, audio files) isn't recorded — the narration is the voice-over; content of iframes from other sites runs in real time, not on the recording's clock; drag gestures and typing aren't among the actions
 - The extension works on `http(s)` pages only (not `chrome://` pages)
 - Single-user, local use; no accounts or collaboration
 

@@ -18,9 +18,10 @@ from typing import Any, Callable, Dict, List, NamedTuple, Optional, Sequence, Tu
 
 from .. import config, i18n
 from ..models import Project, Step
-from . import ffmpeg_util
+from . import ffmpeg_util, proxy
 
 _voices_cache: Dict[str, Any] = {"ts": 0.0, "data": []}
+EDGE_HOST = "speech.platform.bing.com"      # the free online voice service (for proxy exceptions)
 
 # Recommended voice per language (UI defaults)
 DEFAULT_VOICES = {
@@ -120,7 +121,7 @@ def list_voices(force: bool = False) -> List[Dict[str, str]]:
     raw = None
     for attempt in range(EDGE_TRIES):
         try:
-            raw = _run_async(edge_tts.list_voices())
+            raw = _run_async(edge_tts.list_voices(proxy=proxy.current(EDGE_HOST)))
             break
         except Exception as e:
             if attempt == EDGE_TRIES - 1:
@@ -151,6 +152,9 @@ async def _edge_synth(text: str, voice: str, out_path: Path,
         kwargs["volume"] = volume
     if pitch and pitch != "+0Hz":
         kwargs["pitch"] = pitch
+    via = proxy.current(EDGE_HOST)
+    if via:
+        kwargs["proxy"] = via
     comm = edge_tts.Communicate(text, voice, **kwargs)
     boundaries: List[Dict[str, float]] = []
     with open(out_path, "wb") as f:
@@ -303,11 +307,12 @@ def synth(text: str, voice: str, out_path: Path,
                 boundaries = []
                 if used is not None:
                     used["fallback"] = name
+                    used["fallback_error"] = proxy.shown(str(e))[:300]       # why the online voice failed: said in the job's result
             else:
                 raise TTSError(i18n.t("SAPI5 也没有生成音频"))
         except Exception as e2:
             part.unlink(missing_ok=True)
-            raise TTSError(i18n.t("语音合成失败：{error}；离线兜底同样失败：{error2}", error=e, error2=e2))
+            raise TTSError(i18n.t("语音合成失败：{error}；离线兜底同样失败：{error2}", error=proxy.shown(str(e)), error2=e2))
         finally:
             try:
                 wav.unlink(missing_ok=True)
@@ -419,6 +424,7 @@ def synth_project(
     made = 0
     errors: List[str] = []
     fell_back: List[str] = []                 # paragraphs Windows' own voice read because the online voice failed
+    reasons: List[str] = []                   # and why the online voice failed for them
     pending: List[_Para] = []
     for pos, (key, step, text) in enumerate(todo, 1):
         fname = f"{key}.mp3"
@@ -438,17 +444,21 @@ def synth_project(
         step's record (duration, subtitle times), so a paragraph that is dropped (Stop) never leaves new audio next to old times.
         The last value is the Windows voice that read it when the online voice failed ("" normally)."""
         used: Dict[str, str] = {}
-        if para.step is None:
-            return synth_card(audio_dir, para.key.strip("_"), para.text, voice, rate, volume, used), [], [], None, used.get("fallback", "")
-        out = para.path.with_name(f"{para.path.stem}.{uuid.uuid4().hex[:6]}.new.mp3")
         try:
-            if dialogue_on and para.step.lines:
-                return (*dialogue.synth_lines(proj, para.step, out, rate, volume, used=used), out, used.get("fallback", ""))
-            dur, bounds = synth(para.text, voice, out, rate, volume, used=used)
-            return dur, bounds, [], out, used.get("fallback", "")
-        except BaseException:
-            out.unlink(missing_ok=True)
-            raise
+            if para.step is None:
+                return synth_card(audio_dir, para.key.strip("_"), para.text, voice, rate, volume, used), [], [], None, used.get("fallback", "")
+            out = para.path.with_name(f"{para.path.stem}.{uuid.uuid4().hex[:6]}.new.mp3")
+            try:
+                if dialogue_on and para.step.lines:
+                    return (*dialogue.synth_lines(proj, para.step, out, rate, volume, used=used), out, used.get("fallback", ""))
+                dur, bounds = synth(para.text, voice, out, rate, volume, used=used)
+                return dur, bounds, [], out, used.get("fallback", "")
+            except BaseException:
+                out.unlink(missing_ok=True)
+                raise
+        finally:
+            if used.get("fallback_error"):
+                reasons.append(used["fallback_error"])
 
     def take(para: _Para, res: Tuple[float, List[Dict[str, float]], List[List[float]], Optional[Path], str]) -> None:
         """Back in the calling thread: the new audio file and the step's record change together."""
@@ -520,9 +530,12 @@ def synth_project(
     if fell_back:
         notes.append(i18n.t("在线配音这次连不上，{n} 段改用了这台电脑自带的语音（音质较差）。稍后再点「② 合成语音」，这几段会自动用原来的音色重新配音。",
                             n=len(fell_back)))
+        if reasons:
+            notes.append(i18n.t("连不上的原因：{error}", error=reasons[0]))
     if errors:
         notes.append(i18n.t("{n} 段没能配音：{error}", n=len(errors), error=errors[0].split("] ", 1)[-1][:300]))
     return {"generated": made, "total": len(todo), "errors": errors, "voice": voice, "fallback": len(fell_back),
+            "fallback_reason": reasons[0] if fell_back and reasons else "", "proxy": proxy.shown(proxy.current(EDGE_HOST)) or "",
             "warning": "\n\n".join(notes)}
 
 

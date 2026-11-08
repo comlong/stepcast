@@ -38,10 +38,14 @@ def pick_home(install_dir: Path, frozen: bool) -> Path:
     return legacy if legacy.exists() and not home.exists() else home
 
 
-BASE_DIR = pick_home(INSTALL_DIR, FROZEN)
+# VT_HOME: a work folder chosen by the user (the assistant skill's installation): settings, projects and the program's
+# environment all live there, so updating the skill replaces only the program
+BASE_DIR = Path(os.environ["VT_HOME"]).resolve() if os.environ.get("VT_HOME") else pick_home(INSTALL_DIR, FROZEN)
 CONFIG_PATH = BASE_DIR / "config.json"
 DATA_DIR = Path(os.environ.get("VT_DATA_DIR", BASE_DIR / "projects"))
 STATIC_DIR = RESOURCE_DIR / "static"
+# the Chrome extension: the skill's installation keeps it in the work folder, so its path stays the same across updates
+EXTENSION_DIR = BASE_DIR / "extension" if (BASE_DIR / "extension").is_dir() else INSTALL_DIR / "extension"
 
 DEFAULTS: Dict[str, Any] = {
     # LLM: llm_provider picks the provider, llm_providers[provider] = {api_key, base_url, model}
@@ -50,6 +54,9 @@ DEFAULTS: Dict[str, Any] = {
     # paid voice services: tts_services[doubao | minimax | qwen | gemini | elevenlabs | azure] = {api_key, voices (your own voice IDs), model, region, …}
     "tts_services": {},
     "tts_paid_enabled": True,     # the paid voice services are in use; off = only the free Edge voices (keys stay saved for later)
+    # the built-in AI is off: no narration / translation / rewriting by an AI model from this app (an external assistant writes
+    # them through the local API instead); voice-over isn't affected
+    "ai_disabled": False,
     # fields from old versions that only supported DeepSeek; still valid
     "deepseek_api_key": "",
     "deepseek_base_url": "https://api.deepseek.com",
@@ -74,6 +81,8 @@ DEFAULTS: Dict[str, Any] = {
     "dim_background": True,
     "burn_subtitles": True,
     "second_sub_space": True,       # move the main subtitle up a little and leave the very bottom for second-language subtitles (external)
+    # save the main subtitles as .srt / .vtt next to the video; off (only when they are burned in) keeps players from showing them twice
+    "sidecar_subtitles": True,
     "show_cursor": True,
     "show_step_badge": True,
     "browser_frame": True,

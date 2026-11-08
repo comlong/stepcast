@@ -110,6 +110,67 @@ class SlideReveal(BaseModel):
     align_key: str = ""
 
 
+class WebControl(BaseModel):
+    """A control on an HTML slide (button, tab, card …) that an action can click. Found when the deck is imported."""
+    path: str = ""            # CSS selector inside the slide (":scope > div:nth-of-type(2) > button:nth-of-type(1)") or "#id"
+    text: str = ""            # its visible text
+    name: str = ""            # aria-label / title
+    tag: str = ""
+    cls: str = ""             # its classes (tell "the cards" from "the buttons")
+    group: str = ""           # controls of one kind side by side (tabs, cards, hotspots) share it
+    x: float = 0              # position and size on the slide, as fractions of the slide
+    y: float = 0
+    w: float = 0
+    h: float = 0
+    effect: str = ""          # what a click brings up on the page (tried out for the AI that writes the narration)
+
+
+class WebBlock(BaseModel):
+    """A piece of content on an HTML slide the narration can talk about: a card, a list item, a table row, a captioned picture."""
+    path: str = ""            # CSS selector inside the slide, as for a control
+    key: str = ""             # what it is called: its heading, else the first words of its text
+    text: str = ""            # its text (shortened)
+    kind: str = ""            # item | row | card | figure | quote
+    x: float = 0              # position and size on the slide, as fractions of the slide
+    y: float = 0
+    w: float = 0
+    h: float = 0
+
+
+class WebAction(BaseModel):
+    """Something done on an HTML slide while its narration plays."""
+    id: str = Field(default_factory=lambda: new_id("a_"))
+    kind: str = "click"       # click | hover | next (show the slide's next build, as → does) | focus (highlight a block)
+    control: int = -1         # index into WebPage.controls (click / hover) or WebPage.blocks (focus)
+    pos: int = 0              # where in the narration it happens: character offset (the words starting there are spoken as it happens)
+    quote: str = ""           # the narration text at pos: finds the place again after the narration was edited
+    unit: int = -1            # the sentence it is in (finds the place again in a translated narration with as many sentences)
+    delay: float = 0.0        # seconds after that point
+    until: float = Field(default=0.0, exclude=True)  # focus: second it ends at (worked out with the voice-over's timing, never saved)
+
+
+class WebPage(BaseModel):
+    """An HTML slide: which page of the imported deck it shows (deck in the project's web/ folder) and what happens on it."""
+    page: int = 0             # 0-based slide number in the deck
+    live: bool = True         # recorded moving (its animations, the actions); False = the still image only
+    controls: List[WebControl] = Field(default_factory=list)
+    blocks: List[WebBlock] = Field(default_factory=list)
+    actions: List[WebAction] = Field(default_factory=list)
+    manual: bool = False      # the actions were set by hand: kept (following the narration's text) instead of placed again automatically
+    clicks: bool = True       # automatic actions include clicks on controls; False ("animations only"): just the slide's parts coming in
+    plan_key: str = ""        # fingerprint of the narration / notes the automatic actions were placed for
+    unit_count: int = 0       # sentences the narration had then
+    builds: int = 0           # parts the slide reveals one at a time with → (fragments)
+    build_texts: List[str] = Field(default_factory=list)
+
+
+class WebClip(BaseModel):
+    """The recording of an HTML slide; reused while nothing it was made from has changed."""
+    file: str = ""            # under media/
+    key: str = ""
+    length: float = 0.0       # seconds; longer than the narration when an animation started at the end plays out
+
+
 class DialogueLine(BaseModel):
     """One line of a two-person Q&A dialogue."""
     who: str = "host"         # host (asks, links topics) | expert (explains)
@@ -159,6 +220,8 @@ class Step(BaseModel):
 
     reveal: Optional[SlideReveal] = None      # reveal one by one (None = the whole slide appears at once)
     sequence: str = ""        # how a slide with videos is presented: "" = narration first, then its videos | "video_first" (see slide_sequence)
+    web: Optional[WebPage] = None             # a slide of an imported HTML deck (recorded in a browser when rendering)
+    web_clip: Optional[WebClip] = None        # its last recording
 
     # --- video (kind == "video") ---
     clip: Optional[VideoClip] = None
@@ -238,6 +301,7 @@ class CardStyle(BaseModel):
 class Project(BaseModel):
     id: str = Field(default_factory=lambda: new_id("p_"))
     name: str = Field(default_factory=lambda: i18n.t("未命名教程"))
+    folder: str = ""          # the folder it is kept in, in the project list ("" = none); folders are just this name, one level
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
 
@@ -304,6 +368,10 @@ class SlidesCreateReq(BaseModel):
     dialogue: bool = False          # two-person Q&A: the host asks, the expert explains
     host_voice: str = ""
     expert_voice: str = ""
+    web_mode: str = "demo"          # HTML decks: demo = record the animations and do the clicks the notes ask for | animate = animations,
+                                    # no clicks | still = still images, like a PDF
+    web_cursor: bool = True         # HTML decks: show a mouse pointer moving to what is clicked
+    web_focus: bool = True          # HTML decks: highlight the piece of content the narration is talking about
 
 
 class RedactScanReq(BaseModel):
@@ -354,3 +422,5 @@ class RenderReq(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     fps: Optional[int] = None
+    second_sub_space: Optional[bool] = None    # leave room at the bottom for second-language subtitles
+    sidecar_subtitles: Optional[bool] = None   # also save the (burned-in) main subtitles as .srt / .vtt next to the video

@@ -202,7 +202,14 @@ def display_name(cfg: Optional[Dict[str, Any]] = None) -> str:
     return i18n.t(PRESETS[provider_id(cfg)].name)
 
 
+def ai_disabled() -> bool:
+    """The built-in AI is switched off in the settings: every AI feature stops here, before any request is made."""
+    return bool(config.load().get("ai_disabled"))
+
+
 def get_client(pid: str = "", api_key: str = "", base_url: str = "", model: str = "") -> ChatClient:
+    if ai_disabled():
+        raise LLMError(i18n.t("内置 AI 已关闭（设置 → AI 与语音）。解说、翻译和改写请交给外部助手完成。"))
     r = resolve(pid, api_key=api_key, base_url=base_url, model=model)
     p = r.preset
     name = i18n.t(p.name)

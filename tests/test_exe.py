@@ -137,6 +137,30 @@ try:
     real = float(r.stdout.strip() or 0)
     check("视频时长正常（不是几十分钟的静音）", plan - 1 < real < plan + 12, f"{real:.1f}s（各步合计 {plan:.1f}s + 片头片尾）")
 
+    print("\n== 4b. 网页演示稿（后台 Edge / Chrome；注入页面的脚本要打进包里）==")
+    if h.get("web_browser"):
+        deck = ("<!doctype html><html><head><meta charset='utf-8'><style>html,body{margin:0;height:100%;background:#fff}"
+                ".slide{position:absolute;inset:0;padding:60px;display:none}.slide.on{display:block}"
+                ".bar{height:120px;width:0;background:#2a7;animation:g 2s linear forwards}@keyframes g{to{width:100%}}</style></head><body>"
+                "<section class='slide on' data-notes='第一页的解说，这一页有一个长条动画，讲得稍微长一点。'><h1>第一页</h1><div class='bar'></div></section>"
+                "<section class='slide' data-notes='第二页的解说。'><h1>第二页</h1></section>"
+                "<script>const S=[...document.querySelectorAll('.slide')];let k=0;addEventListener('keydown',e=>{if(e.key==='ArrowRight'&&k<1)"
+                "{S[k].classList.remove('on');k++;S[k].classList.add('on');}});</script></body></html>")
+        r = wait_job(requests.post(f"{B}/api/import/slides", files={"file": ("演示 稿.html", deck.encode("utf-8"), "text/html")}, headers=H).json())
+        web_man = r.get("result") or {}
+        check("HTML 讲稿解析", r["status"] == "done" and web_man.get("count") == 2 and (web_man.get("web") or {}).get("nav") == "key",
+              r.get("error") or web_man.get("web"))
+        r = wait_job(requests.post(f"{B}/api/import/slides/{web_man['id']}/create",
+                                   json={"notes_mode": "verbatim", "missing": "empty", "language": "zh-CN", "auto_voice": False}, headers=H).json())
+        check("建项目", r["status"] == "done", r.get("error"))
+        wid = r["result"]["project_id"]
+        r = wait_job(requests.post(f"{B}/api/projects/{wid}/render", json={"width": 960, "height": 540, "fps": 15}, headers=H).json())
+        wp = requests.get(f"{B}/api/projects/{wid}").json()
+        check("网页页面录成了动画片段（渲染没有提醒）", r["status"] == "done" and not (r.get("result") or {}).get("warning")
+              and all(s.get("web_clip") for s in wp["steps"]), r.get("error") or (r.get("result") or {}).get("warning"))
+    else:
+        print("  这台电脑没有 Edge / Chrome，跳过")
+
     print("\n== 5. 语音识别（faster-whisper）==")
     clip = SP / "line0.mp3"
     with open(clip, "rb") as f:

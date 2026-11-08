@@ -284,6 +284,22 @@ button.stop:hover:not(:disabled) { background: #52252c; color: #ffc2c2; }
 }
 .projrow:hover { background: var(--panel2); }
 .projrow img { width: 64px; height: 38px; object-fit: cover; border-radius: 5px; background: #0b0e13; }
+.projfolder {
+  display: flex; align-items: center; gap: 8px; padding: 8px 9px;
+  border-radius: 9px; cursor: pointer; user-select: none;
+}
+.projfolder:hover { background: var(--panel2); }
+.projfolder .caret { width: 12px; color: var(--muted); }
+.projfolder-items { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 4px; }
+.projsep { margin: 10px 9px 2px; }
+
+/* HTML slides: the clicks done while the narration plays (sentence · what · where) */
+.web-acts { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.web-act { display: grid; grid-template-columns: minmax(0, 1.5fr) auto minmax(0, 1fr) auto; gap: 4px; align-items: center; }
+.web-act select { min-width: 0; font-size: 12px; padding: 4px 6px; }
+.web-act.off { opacity: .45; }                      /* a highlight while highlights are switched off for the project */
+.web-act .wa-ctl.off { visibility: hidden; }        /* "show the next part" needs no control; the row keeps its columns */
+#imWebTipsText { white-space: pre-wrap; line-height: 1.6; }
 
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-thumb { background: #2a3341; border-radius: 5px; }

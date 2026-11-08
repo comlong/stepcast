@@ -8,6 +8,7 @@ Output:
         StepCast.exe
         _internal/                    all libraries (Python, ffmpeg, speech recognition …), don't delete
         extension/                    Chrome extension; choose it under chrome://extensions → "Load unpacked"
+        agent/workbuddy/stepcast-video/   skill for an assistant (e.g. WorkBuddy) that drives StepCast through its local API
         README.txt
     dist/StepCast-<version>-win64.zip     the zip to share
 
@@ -41,6 +42,10 @@ README = """StepCast
 2. Install the Chrome extension (once):
    open chrome://extensions → enable "Developer mode" (top right) → "Load unpacked" → select the extension folder inside this folder.
 3. In the editor, open ⚙ Settings (top right) to choose an AI provider and enter your API key. The language menu at the top right switches the interface language.
+4. Optional — let an AI assistant on this computer do the writing instead (e.g. WorkBuddy): add the skill folder
+   agent\\workbuddy\\stepcast-video to the assistant (WorkBuddy: Skills → Add skill → Upload, or copy the folder to
+   %USERPROFILE%\\.workbuddy\\skills\\). The assistant then turns recordings into videos through StepCast's local API and
+   switches StepCast's built-in AI off (⚙ Settings → AI & voice → "Turn off the built-in AI"); no API key is needed here.
 
 Where your data is stored:
 - All projects (screenshots, voice-overs, rendered videos) are in the projects\\ folder next to the exe; videos are in projects\\<project id>\\output\\
@@ -99,6 +104,9 @@ StepCast itself is released under the Apache License 2.0 (see LICENSE.txt); sour
 2. 安装 Chrome 扩展（只需一次）：
    Chrome 地址栏输入 chrome://extensions → 打开右上角「开发者模式」→「加载已解压的扩展程序」→ 选择本文件夹里的 extension 文件夹。
 3. 在编辑器右上角 ⚙ 设置里选 AI 服务商、填 API Key。右上角下拉框可以切换界面语言。
+4. 可选：让本机的 AI 助手（比如 WorkBuddy）来写解说：把 agent\\workbuddy\\stepcast-video 文件夹加到助手的技能里
+   （WorkBuddy：技能 → 添加技能 → 上传，或复制到 %USERPROFILE%\\.workbuddy\\skills\\）。助手通过本机接口把录制做成视频，
+   并关闭 StepCast 的内置 AI（⚙ 设置 → AI 与语音 →「关闭内置 AI」），这时 StepCast 里不需要填 API Key。
 
 数据保存在哪里：
 - 所有项目（录制的截图、配音、生成的视频）在本文件夹的 projects\\ 里，视频在 projects\\<项目id>\\output\\
@@ -202,6 +210,8 @@ def main() -> int:
                     "--workpath", str(ROOT / "build" / "pyinstaller")], check=True, cwd=ROOT)
 
     shutil.copytree(ROOT / "extension", APP_DIR / "extension",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+    shutil.copytree(ROOT / "agent", APP_DIR / "agent",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
     (APP_DIR / "README.txt").write_text(README, encoding="utf-8-sig")
     shutil.copyfile(ROOT / "LICENSE", APP_DIR / "LICENSE.txt")

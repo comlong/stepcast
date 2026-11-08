@@ -21,11 +21,11 @@ from starlette.background import BackgroundTask
 from . import config, i18n, storage
 from .models import (CardStyle, CaptureStepReq, DialogueLine, PlaybackReq, Project, Rect, RedactionsReq,
                      RedactScanReq, RenderReq, ScriptReq, SlidesCreateReq, StartCaptureReq, Step,
-                     Target, TranslateReq, TTSReq, drop_stale_lines, join_lines)
-from .services import (asr, cards, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs, slide_sequence,
-                       slides, tts, tts_cloud, video, voice)
+                     Target, TranslateReq, TTSReq, WebAction, drop_stale_lines, join_lines)
+from .services import (asr, cards, cdp, clips, dialogue, ffmpeg_util, jobs, llm, redact, script_gen, second_subs,
+                       slide_sequence, slides, step_tools, tts, tts_cloud, video, voice, web_actions)
 
-app = FastAPI(title="StepCast", version="1.9.4")
+app = FastAPI(title="StepCast", version="1.10.0")
 
 # ---- local access only ---------------------------------------------------
 # The service holds screenshots of the internal systems you recorded and can use your LLM API keys. With open CORS any web page
@@ -78,6 +78,7 @@ UPLOAD_LIMITS = [
     (re.compile(r"^/api/transcribe$"), voice.MAX_STEP_BYTES),
     (re.compile(r"^/api/projects/[^/]+/steps/[^/]+/voice$"), voice.MAX_STEP_BYTES),
     (re.compile(r"^/api/projects/[^/]+/magic-mic$"), voice.MAX_SESSION_BYTES),
+    (re.compile(r"^/api/projects/[^/]+/steps/image$"), step_tools.MAX_IMAGE_BYTES * 4 // 3),   # base64 in JSON
 ]
 UPLOAD_OVERHEAD = 1024 * 1024        # multipart framing and the other form fields
 
@@ -227,12 +228,23 @@ def health():
         "ffmpeg": ffmpeg_util.available(),
         "ui_language": ui_language(),
         "llm": {k: v for k, v in llm.public_state(cfg).items() if k != "providers"},
+        "ai_disabled": bool(cfg.get("ai_disabled")),     # an external assistant writes narration / translations instead
         "recording": _recording["project_id"],
         "data_dir": str(config.DATA_DIR),
         "asr": asr.status(),
         "powerpoint": slides.powerpoint_available(),
+        "web_browser": cdp.browser_name(cdp.find_browser()),     # Edge / Chrome for HTML decks ("" = none)
         "languages": language_list(),        # the extension's narrate-while-recording language list comes from here
     }
+
+
+@app.get("/api/network")
+def network():
+    """Which proxy the free online voice goes through (null = direct), and the ones considered: for finding out why a voice-over fell
+    back to Windows' own voice. Not part of /api/health, which must answer at once (checking a proxy can take a moment).
+    A user name and password in a proxy URL are never shown."""
+    from .services import proxy
+    return {"voice_proxy": proxy.shown(proxy.current(tts.EDGE_HOST)), "candidates": [proxy.shown(u) for u in proxy.candidates()]}
 
 
 @app.get("/api/settings")
@@ -394,10 +406,17 @@ def create_project(body: Dict[str, Any] = Body(default={})):
 
 
 def _public(proj: Project) -> Dict[str, Any]:
-    """Project data for the editor. The text index is only used for server-side redaction scans and can be several MB, so it isn't sent."""
+    """Project data for the editor. The text index is only used for server-side redaction scans and can be several MB, so it isn't sent.
+    The automatic actions of HTML slides are shown as they follow the current narration (placed again here, as the render will)."""
+    for s in proj.steps:
+        if s.web is not None:
+            web_actions.refresh(s)
     data = proj.model_dump(exclude={"steps": {"__all__": {"text_nodes"}}})
     for d, s in zip(data["steps"], proj.steps):
         d["text_nodes_count"] = len(s.text_nodes)
+        if s.web is not None:              # the narration's sentences, for "at which sentence" in the editor
+            d["web"]["units"] = [{"a": a, "b": b, "text": s.narration[a:b]} for a, b in web_actions.units(s.narration or "")]
+            d["web"]["units_for"] = s.narration or ""
     return data
 
 
@@ -439,6 +458,22 @@ def patch_project(pid: str, body: Dict[str, Any] = Body(...)):
             p.settings = {**(p.settings or {}), **body["settings"]}
     storage.update(pid, _do)
     return _public(_need(pid))
+
+
+@app.post("/api/projects/{pid}/folder")
+def move_to_folder(pid: str, body: Dict[str, Any] = Body(...)):
+    """Put a project into a folder of the project list ("" = out of its folder)."""
+    _need(pid)
+    p = storage.set_folder(pid, str(body.get("folder") or ""))
+    return {"id": p.id, "folder": p.folder}
+
+
+@app.post("/api/folders/rename")
+def rename_folder(body: Dict[str, Any] = Body(...)):
+    """Rename a folder of the project list; an empty new name dissolves it (its projects stay, back at the top level).
+    `folder` is the new name as stored (spaces tidied up, shortened)."""
+    new = str(body.get("new") or "")
+    return {"moved": storage.rename_folder(str(body.get("old") or ""), new), "folder": storage.folder_name(new)}
 
 
 @app.delete("/api/projects/{pid}")
@@ -544,6 +579,116 @@ def delete_step(pid: str, sid: str):
         if src is not None:
             src.unlink(missing_ok=True)
     return {"ok": True}
+
+
+# ---- step tools for external assistants (an agent driving this local API) ----------------------------------
+
+def _tool_error(e: Exception) -> HTTPException:
+    return HTTPException(400, str(e))
+
+
+def _int_field(body: Dict[str, Any], key: str, default: Optional[int] = None) -> Optional[int]:
+    """A whole number from a request body (a 400, not a server error, when it isn't one)."""
+    v = body.get(key)
+    if v is None or v == "":
+        return default
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, i18n.t("{field} 要是一个整数", field=key))
+
+
+@app.post("/api/projects/{pid}/steps/copy")
+def copy_steps(pid: str, body: Dict[str, Any] = Body(...)):
+    """Copy recorded steps from another project into this one: {"source": project id, "steps": [step ids or indexes],
+    "crop": pixels cut from every edge of the screenshots, "position": insert before this index (default: at the end)}.
+    Titles and narration come along; voice-over doesn't. Coordinates (highlight, click, redactions) follow the crop."""
+    _need(pid)
+    src = _need(str(body.get("source") or ""))
+    refs = body.get("steps")
+    if not isinstance(refs, list) or not refs:
+        raise HTTPException(400, i18n.t("steps 要是一个非空列表"))
+    crop, pos = _int_field(body, "crop", 0), _int_field(body, "position")
+    try:
+        new = step_tools.copy_steps(src, pid, [str(x) for x in refs], crop)
+    except step_tools.StepToolError as e:
+        raise _tool_error(e)
+    storage.update(pid, lambda p: step_tools.insert(p, new, pos))
+    return {"added": [s.id for s in new], "project": _public(_need(pid))}
+
+
+@app.post("/api/projects/{pid}/steps/crop")
+def crop_steps(pid: str, body: Dict[str, Any] = Body(...)):
+    """Cut {"crop": pixels} from every edge of the screenshots of {"steps": [ids]} (all steps when left out), e.g. the glow a
+    browser automation draws around the page. Slides and video steps are left alone. Run it once: each call cuts again.
+    All or nothing: if one picture can't be cropped, none is."""
+    _need(pid)
+    ids = body.get("steps")
+    wanted = set(map(str, ids)) if ids else None
+    px = _int_field(body, "crop", 0)
+    try:
+        done = storage.update(pid, lambda p: step_tools.crop_many(
+            pid, [s for s in p.steps if wanted is None or s.id in wanted], px))
+    except step_tools.StepToolError as e:
+        raise _tool_error(e)
+    return {"cropped": done, "project": _public(_need(pid))}
+
+
+@app.post("/api/projects/{pid}/steps/image")
+def add_image_slide(pid: str, body: Dict[str, Any] = Body(...)):
+    """Insert a picture as a slide step: {"image": base64 PNG / JPG (a data: URL works too), "title", "narration",
+    "slide_text", "caption", "position"}. For pages made elsewhere, e.g. a background or summary page drawn by the assistant."""
+    _need(pid)
+    pos = _int_field(body, "position")
+    try:
+        st = step_tools.image_slide(pid, str(body.get("image") or ""), str(body.get("title") or ""),
+                                    str(body.get("narration") or ""), str(body.get("slide_text") or ""),
+                                    body.get("caption"))
+    except step_tools.StepToolError as e:
+        raise _tool_error(e)
+    storage.update(pid, lambda p: step_tools.insert(p, [st], pos))
+    return {"added": st.id, "project": _public(_need(pid))}
+
+
+@app.put("/api/projects/{pid}/steps/{sid}/web")
+def put_web(pid: str, sid: str, body: Dict[str, Any] = Body(...)):
+    """Change an HTML slide: {"live": bool} (recorded moving / still image), {"actions": [{"kind": click | hover | next | focus, "control":
+    index into web.controls (focus: web.blocks), "unit": sentence of the narration (or "pos": character offset), "delay": seconds}]} — set
+    by hand from now on —, or {"auto": true}: placed automatically from the notes and narration again."""
+    _need(pid)
+
+    def _do(p: Project):
+        st = next((x for x in p.steps if x.id == sid), None)
+        if st is None or st.web is None:
+            raise HTTPException(404, i18n.t("这一步不是网页演示稿的页面"))
+        w = st.web
+        if "live" in body:
+            w.live = bool(body["live"])
+        if body.get("auto"):
+            w.manual, w.clicks, w.plan_key = False, True, ""      # placed from the notes again, clicks included
+            web_actions.refresh(st)
+        elif isinstance(body.get("actions"), list):
+            us = web_actions.units(st.narration or "")
+            acts = []
+            for a in body["actions"][:60]:
+                if not isinstance(a, dict) or a.get("kind") not in ("click", "hover", "next", "focus"):
+                    raise HTTPException(400, i18n.t("动作要是 click / hover / next / focus 之一"))
+                ctl = int(a.get("control", -1)) if a["kind"] != "next" else -1
+                if a["kind"] != "next" and not 0 <= ctl < len(w.blocks if a["kind"] == "focus" else w.controls):
+                    raise HTTPException(400, i18n.t("这一页没有这个控件：{n}", n=ctl))
+                if "unit" in a and us:
+                    pos = us[max(0, min(len(us) - 1, int(a["unit"])))][0]
+                    if int(a["unit"]) >= len(us):
+                        pos = len(st.narration or "")      # after the last sentence
+                else:
+                    pos = max(0, min(len(st.narration or ""), int(a.get("pos", 0))))
+                acts.append(WebAction(kind=a["kind"], control=ctl, pos=pos, quote=web_actions.quote(st.narration, pos),
+                                      delay=max(0.0, min(10.0, float(a.get("delay", 0) or 0)))))
+            w.actions = web_actions.stamp(st.narration, sorted(acts, key=lambda x: x.pos))
+            w.manual = True
+            w.unit_count = len(us)
+    storage.update(pid, _do)
+    return _public(_need(pid))
 
 
 @app.put("/api/projects/{pid}/speakers")
@@ -1022,8 +1167,8 @@ def magic_mic_upload(pid: str, file: UploadFile = File(...), rec_start: float = 
 def slides_upload(file: UploadFile = File(...)):
     name = file.filename or "slides.pptx"
     ext = Path(name).suffix.lower()
-    if ext not in (".pptx", ".ppt", ".pdf"):
-        raise HTTPException(400, i18n.t("只支持 .pptx / .ppt / .pdf"))
+    if ext not in (".pptx", ".ppt", ".pdf", ".html", ".htm", ".zip"):
+        raise HTTPException(400, i18n.t("只支持 .pptx / .ppt / .pdf / .html / .zip"))
     tmp_dir = config.DATA_DIR / "_tmp"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     tmp = tmp_dir / (_tmp_name("slides") + ext)
@@ -1388,6 +1533,8 @@ def gen_video(pid: str, req: RenderReq):
         "video_width": req.width,
         "video_height": req.height,
         "video_fps": req.fps,
+        "second_sub_space": req.second_sub_space,
+        "sidecar_subtitles": req.sidecar_subtitles,
     }
 
     def work(job: jobs.Job):
@@ -1395,7 +1542,7 @@ def gen_video(pid: str, req: RenderReq):
         before, proj = _snapshot(pid)
         res = video.render_project(proj, progress=lambda f, m: job.progress(0.03 + f * 0.97, m),
                                    overrides=overrides)
-        storage.commit(pid, before, proj, step_fields=("duration",), project_fields=("output",))
+        storage.commit(pid, before, proj, step_fields=("duration", "web_clip"), project_fields=("output",))
         return res
     return _submit("render", work, pid, exclusive=jobs.HEAVY)
 
@@ -1436,7 +1583,7 @@ def _auto_job(pid: str, style: str = "friendly", overwrite: bool = False, write_
         before, proj = _snapshot(pid)
         out["video"] = video.render_project(
             proj, progress=lambda f, m: job.progress(0.52 + f * 0.48, m))
-        storage.commit(pid, before, proj, step_fields=("duration",), project_fields=("output",))
+        storage.commit(pid, before, proj, step_fields=("duration", "web_clip"), project_fields=("output",))
         out["warning"] = "\n\n".join(w for w in (out["tts"].get("warning", ""), out["video"].get("warning", "")) if w)
         return out
     return _submit("auto", work, pid, exclusive=jobs.HEAVY)
@@ -1466,6 +1613,33 @@ def subtitles2_generate(pid: str, body: Dict[str, Any] = Body(default={})):
         storage.update(pid, lambda p: second_subs.merge_tracks(p, tracks))
         return second_subs.state(_need(pid))
     return _submit("subtitles2", work, pid, exclusive=jobs.HEAVY)
+
+
+# Second-language subtitles translated by an external assistant (no AI call here): take the sentences, send the translations back.
+@app.get("/api/projects/{pid}/subtitles2/sentences")
+def subtitles2_sentences(pid: str):
+    """The current video's main subtitles merged into sentences, each with its time; translate them one by one, keep the order."""
+    try:
+        return second_subs.sentences(_need(pid))
+    except llm.LLMError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/projects/{pid}/subtitles2/{lang}/import")
+def subtitles2_import(pid: str, lang: str, body: Dict[str, Any] = Body(...)):
+    """Save translations made elsewhere as the second-language subtitle {lang}: body = {"texts": [one per sentence], "key": …}."""
+    proj = _need(pid)
+    if lang not in script_gen.LANG_NAMES:
+        raise HTTPException(400, i18n.t("不支持的语言：{lang}", lang=lang))
+    texts = body.get("texts")
+    if not isinstance(texts, list):
+        raise HTTPException(400, i18n.t("texts 要是一个列表"))
+    try:
+        track = second_subs.import_track(proj, lang, [str(x or "") for x in texts], str(body.get("key") or ""))
+    except llm.LLMError as e:
+        raise HTTPException(400, str(e))
+    storage.update(pid, lambda p: second_subs.merge_tracks(p, [track]))
+    return second_subs.state(_need(pid))
 
 
 @app.get("/api/projects/{pid}/subtitles2/{lang}")
@@ -1529,6 +1703,26 @@ _KIND_DIR = {
 }
 
 
+def _main_subtitle_file(pid: str, name: str) -> Optional[Path]:
+    """The current video's main subtitles as <video>.srt / .vtt, written to a temporary file from the saved timeline.
+    None when name isn't one of them or there is no timeline."""
+    from .services import subtitles as subs
+    proj = storage.load(pid)
+    if proj is None or not proj.output:
+        return None
+    stem, ext = Path(name).stem, Path(name).suffix.lower()
+    if stem != Path(proj.output).stem or ext not in (".srt", ".vtt"):
+        return None
+    primary = second_subs.load_primary(proj)
+    if not primary or not primary.get("cues"):
+        return None
+    cues = [subs.Cue(float(s), float(e), str(t)) for s, e, t in primary["cues"]]
+    tmp = storage.work_dir(pid) / f"sub_{uuid.uuid4().hex[:8]}{ext}"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    (subs.write_srt if ext == ".srt" else subs.write_vtt)(cues, tmp)
+    return tmp
+
+
 @app.get("/api/projects/{pid}/file/{kind}/{name}")
 def get_file(pid: str, kind: str, name: str, download: bool = False):
     if kind not in _KIND_DIR:
@@ -1537,6 +1731,11 @@ def get_file(pid: str, kind: str, name: str, download: bool = False):
         raise HTTPException(404, i18n.t("文件不存在"))
     base = _KIND_DIR[kind](pid).resolve()
     path = (base / name).resolve()
+    if path.is_relative_to(base) and not path.is_file() and kind == "output":
+        made = _main_subtitle_file(pid, name)       # not saved next to the video ("sidecar_subtitles" off): made on request
+        if made is not None:
+            return FileResponse(made, filename=name, content_disposition_type="attachment" if download else "inline",
+                                background=BackgroundTask(lambda: made.unlink(missing_ok=True)))
     if not path.is_relative_to(base) or not path.is_file():
         raise HTTPException(404, i18n.t("文件不存在"))
     # screenshots are named by step id and never change, so they can be cached long; voice-overs and videos are overwritten in place and must be revalidated
@@ -1620,7 +1819,7 @@ def export_script(pid: str):
     out = {
         "title": proj.title, "subtitle": proj.subtitle,
         "intro": proj.intro, "outro": proj.outro, "language": proj.language,
-        "steps": [{"index": s.index, "title": s.title, "narration": s.narration,
+        "steps": [{"index": s.index, "id": s.id, "title": s.title, "narration": s.narration,
                    "caption": s.caption, "include": s.include,
                    **({"lines": [ln.model_dump() for ln in s.lines]} if s.lines else {})}
                   for s in proj.steps],
@@ -1631,28 +1830,36 @@ def export_script(pid: str):
 
 @app.post("/api/projects/{pid}/import/script")
 def import_script(pid: str, body: Dict[str, Any] = Body(...)):
-    """Import a script JSON edited elsewhere."""
+    """Import a script JSON edited elsewhere. A step item with an `id` is matched by id only; without one, by `index` (0-based)."""
+    items = [x for x in body.get("steps", []) if isinstance(x, dict)]
+    by_id = {str(x["id"]): x for x in items if x.get("id")}
+    by_index = {int(x["index"]): x for x in items if not x.get("id") and "index" in x}
+
     def _do(p: Project):
         for k in ("title", "subtitle", "intro", "outro"):
             if k in body:
                 setattr(p, k, body[k])
-        by_index = {int(x["index"]): x for x in body.get("steps", []) if "index" in x}
         for s in p.steps:
-            item = by_index.get(s.index)
+            item = by_id.get(s.id) or by_index.get(s.index)
             if not item:
                 continue
             if isinstance(item.get("lines"), list) and item["lines"]:      # Q&A lines
                 item = {**item, "narration": join_lines([DialogueLine(**x) for x in dialogue.normalize_lines(item["lines"])])}
                 s.lines = [DialogueLine(**x) for x in dialogue.normalize_lines(item["lines"])]
-            if "narration" in item and (item["narration"] or "") != (s.narration or ""):
+            old_narration, old_caption = s.narration or "", s.caption or ""
+            caption = item.get("caption", old_caption) or ""
+            if "narration" in item and (item["narration"] or "") != old_narration:
                 s.narration = item["narration"] or ""
                 drop_stale_lines(s)
                 if s.voice_source != "own":          # for own-voice steps a text edit only fixes the subtitle; the recording is kept
                     s.audio = ""
                     s.audio_duration = 0.0
                     s.boundaries = []
+                # the subtitle follows the new narration unless it was a text of its own or was changed in the file too
+                if caption == old_caption and old_caption in ("", old_narration) and s.caption_follows_narration():
+                    caption = s.narration
             s.title = item.get("title", s.title)
-            s.caption = item.get("caption", s.caption)
+            s.caption = caption
             s.include = item.get("include", s.include)
     storage.update(pid, _do)
     return _public(_need(pid))

@@ -9,7 +9,9 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
 
-datas = [(os.path.join(ROOT, "static"), "static")]
+datas = [(os.path.join(ROOT, "static"), "static"),
+         # injected into HTML decks (backend/services/webdeck.py reads it next to itself)
+         (os.path.join(ROOT, "backend", "services", "web_page.js"), os.path.join("backend", "services"))]
 binaries = []
 hiddenimports = []
 hiddenimports += collect_submodules("backend")

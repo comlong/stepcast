@@ -69,7 +69,7 @@
             <li>停止录制后回到这里，生成解说 → 语音 → 视频</li>
           </ol>
           <p><button class="primary" id="btnOpenProjects">选择已有项目</button>
-             <button id="btnEmptyImport">📊 从 PPT / PDF 创建</button></p>
+             <button id="btnEmptyImport">📊 从 PPT / PDF / HTML 创建</button></p>
         </div>
         <div id="shotWrap" class="hidden">
           <img id="shot" alt="">
@@ -194,6 +194,19 @@
               </select></label>
             <p class="small muted" id="seqHint" style="margin:4px 0 0"></p>
           </div>
+          <div id="webBox" class="hidden" style="margin-top:14px">
+            <h3>网页动画和点击</h3>
+            <label class="switch"><input type="checkbox" id="fWebLive"> 录下这一页的动画和点击（关掉就是静态画面）</label>
+            <label class="switch"><input type="checkbox" id="fWebCursor"> 点按钮时显示鼠标指针（整个项目）</label>
+            <label class="switch" title="解说提到页面上的某张卡片、某个要点时，画面上高亮它；页面自己有动画或点击的句子不加"><input type="checkbox" id="fWebFocus"> 讲到哪亮到哪（整个项目）</label>
+            <div id="webActs" class="web-acts"></div>
+            <div class="row wrap" style="gap:6px;margin-top:6px">
+              <button class="sm" id="webAdd">＋ 添加点击</button>
+              <button class="sm" id="webAddFocus">＋ 添加高亮</button>
+              <button class="sm" id="webAuto" title="按演讲者备注里的提示和解说内容，重新自动安排这一页的点击">按讲稿重新安排</button>
+            </div>
+            <p class="small muted" id="webHint" style="margin:6px 0 0"></p>
+          </div>
         </div>
 
         <div id="videoBox" class="hidden">
@@ -302,6 +315,8 @@
 
     <div data-pane="ai">
       <h3 class="set-sub" style="margin-top:4px">AI 模型（写解说、翻译、AI 改写）</h3>
+      <label class="switch" style="margin:2px 0 2px"><input type="checkbox" id="sAiOff"> 关闭内置 AI</label>
+      <p class="small muted" style="margin:0 0 10px">打开后，本软件不调用任何 AI 模型；解说、翻译和改写由外部助手通过本机接口写入。配音不受影响。</p>
       <label class="field"><span>服务商</span>
         <select id="sProvider"></select></label>
       <p class="small notes-hint" id="sProviderHint"></p>
@@ -396,6 +411,7 @@
       <label class="switch"><input type="checkbox" id="sFrame"> 加浏览器外框</label>
       <label class="switch"><input type="checkbox" id="sSubs"> 把字幕烧进画面</label>
       <label class="switch" title="主字幕往上挪一点，画面最底下留给第二语言字幕（外挂字幕文件，看的人自己选）"><input type="checkbox" id="sSubSpace"> 给第二语言字幕留位置</label>
+      <label class="switch" title="字幕已经烧进画面时，关掉它可以避免播放器再叠一层字幕；「下载字幕」照样能用"><input type="checkbox" id="sSidecar"> 在视频旁另存字幕文件（.srt / .vtt）</label>
       <label class="switch"><input type="checkbox" id="sIntro"> 生成片头</label>
       <label class="switch"><input type="checkbox" id="sOutro"> 生成片尾</label>
       <div class="row">
@@ -426,9 +442,10 @@
 <div class="modal hidden" id="mProjects">
   <div class="box">
     <h2>项目</h2>
+    <input type="search" id="projSearch" placeholder="搜索项目名或文件夹" autocomplete="off" spellcheck="false" style="width:100%;margin-bottom:8px">
     <div id="projList"></div>
     <div class="foot">
-      <button id="btnImportSlides">📊 从 PPT / PDF 创建</button>
+      <button id="btnImportSlides">📊 从 PPT / PDF / HTML 创建</button>
       <button id="btnNewProject">新建空项目</button>
       <button class="primary" id="btnCloseProjects">关闭</button>
     </div>
@@ -550,19 +567,25 @@
   </div>
 </div>
 
-<!-- PPT / PDF import -->
+<!-- PPT / PDF / HTML import -->
 <div class="modal hidden" id="mImport">
   <div class="box wide">
-    <h2>📊 从 PPT / PDF 创建视频</h2>
+    <h2>📊 从 PPT / PDF / HTML 创建视频</h2>
 
     <div id="imStage1">
       <label class="drop" id="imDrop">
-        <input type="file" id="imFile" accept=".pptx,.ppt,.pdf" hidden>
+        <input type="file" id="imFile" accept=".pptx,.ppt,.pdf,.html,.htm,.zip" hidden>
         <div class="drop-ico">⬆</div>
         <div data-i18n><b>点击选择文件</b>，或拖到这里</div>
-        <div class="small muted" style="margin-top:4px">.pptx / .ppt / .pdf，最多 100 页 · 每一页变成视频里的一个步骤 · 页面里的视频会保留；本机装有 PowerPoint 时页面动画也会保留（见下方选项），切换效果不会</div>
+        <div class="small muted" style="margin-top:4px">.pptx / .ppt / .pdf，或网页演示稿 .html（图片等文件另外存放时，把整个文件夹打包成 .zip）· 最多 100 页 · 每一页变成视频里的一个步骤</div>
+        <div class="small muted" style="margin-top:2px">PPT：页面里的视频会保留，本机装有 PowerPoint 时页面动画也会保留 · 网页：页面动画和按钮点击都会录下来，讲稿里的「（点按钮）」这类提示会照着做</div>
       </label>
       <div class="small muted" id="imStatus" style="margin-top:10px"></div>
+      <details class="small" id="imWebTips" style="margin-top:12px">
+        <summary class="muted">网页演示稿怎样做最容易导入？（可以把要求复制给生成演示稿的 AI）</summary>
+        <div class="pre muted" id="imWebTipsText" style="margin-top:6px"></div>
+        <button class="sm" id="imWebTipsCopy" style="margin-top:6px">📋 复制给 AI 的要求</button>
+      </details>
     </div>
 
     <div id="imStage2" class="hidden">
@@ -613,7 +636,20 @@
         <label class="switch hidden" id="imRevealWrap" style="align-self:end;margin-bottom:14px"
                title="解说说到哪一条，那一条才出现；讲到下一条时，前面讲过的变淡。设了动画的页，按 PPT 里的动画顺序和上下层次出现。需要本机 PowerPoint，导入会慢一些。">
           <input type="checkbox" id="imReveal" checked> 逐条出现，突出当前讲的内容</label>
+        <label class="field hidden" id="imWebWrap"><span>网页的动画和点击</span>
+          <select id="imWebMode">
+            <option value="demo">录下动画，按讲稿的提示点按钮（推荐）</option>
+            <option value="animate">只录动画，不点按钮</option>
+            <option value="still">静态画面（和 PDF 一样）</option>
+          </select></label>
+        <label class="switch hidden" id="imWebCursorWrap" style="align-self:end;margin-bottom:14px"
+               title="点按钮前，画面上会有一个鼠标指针移过去再点下去，看的人更容易看清点了哪里">
+          <input type="checkbox" id="imWebCursor" checked> 点按钮时显示鼠标指针</label>
+        <label class="switch hidden" id="imWebFocusWrap" style="align-self:end;margin-bottom:14px"
+               title="解说提到页面上的某张卡片、某个要点时，画面上高亮它；页面自己有动画或点击的句子不加">
+          <input type="checkbox" id="imWebFocus" checked> 讲到哪亮到哪</label>
       </div>
+      <p class="small notes-hint hidden" id="imWebHint"></p>
       <p class="small" id="imPrivacy"></p>
     </div>
 

@@ -12,11 +12,11 @@ from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from .. import config, i18n, storage
-from ..models import Project, Step
-from . import cards, clips, ffmpeg_util, second_subs, slide_reveal, slide_sequence, subtitles as subs, tts
+from ..models import Project, Step, WebClip
+from . import cards, cdp, clips, ffmpeg_util, second_subs, slide_reveal, slide_sequence, subtitles as subs, tts, web_actions, webdeck
 from .ffmpeg_util import CREATE_NO_WINDOW, FFmpegError
 from .renderer import StepRenderer, Theme, draw_subtitle, ease_out_cubic, render_outro_card, render_title_card, sub_bottom
 
@@ -291,6 +291,167 @@ def _fade_in(frames, prev: Optional[Image.Image], bg: Tuple[int, int, int], fps:
         yield buf
 
 
+# ---- HTML slides --------------------------------------------------------------
+
+WEB_KEEP = 3                 # recordings kept per HTML slide (the video's, a playback preview's, one older)
+
+
+def _web_box(step: Step, shots: Path, theme: Theme) -> Optional[Tuple[int, int, int, int]]:
+    box, has = StepRenderer.layout_box(step, shots / step.screenshot if step.screenshot else Path("_"), theme)
+    return box if has and box else None
+
+
+def _record_web(proj: Project, steps: List[Step], cfg: dict, theme: Theme, fps: int,
+                progress: Progress) -> Tuple[Dict[str, Path], Dict[str, float], str, bool]:
+    """Record the live HTML slides moving (or take their earlier recording when nothing changed).
+    Returns ({step id: clip}, {step id: clip length}, warning, whether anything was recorded now)."""
+    deck = webdeck.load_deck(proj.id)
+    if deck is None:
+        return {}, {}, i18n.t("这个项目里网页演示稿的文件不见了，这些页按静态画面生成。"), False
+    cursor = bool(cfg.get("web_cursor", True))
+    focus = bool(cfg.get("web_focus", True))
+    accent = str(cfg.get("accent_color") or "#FF5C39")
+    shots_dir = storage.screenshots_dir(proj.id)
+    media = clips.media_dir(proj.id)
+    media.mkdir(parents=True, exist_ok=True)
+    found: Dict[str, Path] = {}
+    lengths: Dict[str, float] = {}
+    todo: List[webdeck.Shot] = []
+    for s in steps:
+        box = _web_box(s, shots_dir, theme)
+        if box is None:
+            continue
+        web_actions.refresh(s)                       # automatic actions follow the current narration
+        length = step_duration(s, cfg)
+        acts = web_actions.timeline(s, speech_lead(s), length, focus)
+        size = ((box[2] - box[0]) // 2 * 2, (box[3] - box[1]) // 2 * 2)
+        key = webdeck.clip_key(deck, s, length, acts, size, fps, cursor, accent)
+        hit = webdeck.cached(proj.id, s, key)
+        if hit is None:                              # made by a playback preview, say
+            hit = next((p for p in media.glob(f"web_{s.id}_{key[:10]}.mp4") if p.is_file()), None)
+            if hit is not None:
+                try:
+                    s.web_clip = WebClip(file=hit.name, key=key, length=clips.probe(hit)["duration"])
+                except clips.ClipError:
+                    hit = None
+        if hit is not None and s.web_clip is not None:
+            found[s.id], lengths[s.id] = hit, max(length, s.web_clip.length)
+            continue
+        todo.append(webdeck.Shot(s, length, acts, size, key, media / f"web_{s.id}_{key[:10]}.mp4", cursor,
+                                 extend=any(a.kind != "focus" for _, a in acts) and not s.duration_override, accent=accent))
+    if not todo:
+        return found, lengths, "", False
+    try:
+        res = webdeck.record(proj, todo, fps, progress)
+    except (webdeck.WebDeckError, cdp.CDPError, OSError) as e:
+        return found, lengths, i18n.t("网页演示稿没能录制（{error}），这些页按静态画面生成。", error=str(e)[:300]), True
+    failed = []
+    for sh in todo:
+        got = res["clips"].get(sh.step.id)
+        if got is None:
+            failed.append(sh.step)
+            continue
+        path, length = got
+        found[sh.step.id], lengths[sh.step.id] = path, max(sh.length, length)
+        sh.step.web_clip = WebClip(file=path.name, key=sh.key, length=round(length, 3))
+        old = sorted((p for p in media.glob(f"web_{sh.step.id}_*.mp4") if p != path), key=lambda p: p.stat().st_mtime,
+                     reverse=True)
+        for p in old[WEB_KEEP - 1:]:
+            p.unlink(missing_ok=True)
+    warning = ""
+    if failed:
+        nos = [str(next((k for k, x in enumerate(steps, 1) if x.id == st.id), 0)) for st in failed]
+        first = res["errors"].get(failed[0].id, "")
+        warning = i18n.t("{n} 页网页没能录制（{error}），按静态画面生成：{pages}", n=len(failed), error=first,
+                         pages=", ".join(nos))
+    return found, lengths, warning, True
+
+
+def _web_mask(w: int, h: int, H: int) -> Image.Image:
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, w - 1, h - 1), radius=max(6, int(H * 0.008)), fill=255)
+    return mask
+
+
+def _web_frames(rend: StepRenderer, src: Path, duration: float, fps: int, cues: List[subs.Cue], theme: Theme):
+    """Frames of a recorded HTML slide: the recording in the slide's place (rounded like a slide), the slide change faded in as
+    for any slide, subtitles on top. The last frame is held if the recording is a little shorter than the step."""
+    x0, y0, x1, y1 = rend.draw_box
+    w, h = x1 - x0, y1 - y0
+    mask = _web_mask(w, h, rend.H)
+    proc = subprocess.Popen([ffmpeg_util.ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-i", str(src), "-an",
+                             "-vf", f"scale={w}:{h}:flags=bicubic,fps={fps},format=rgb24", "-f", "rawvideo",
+                             "-pix_fmt", "rgb24", "pipe:1"],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
+    size = w * h * 3
+    n = max(1, int(round(duration * fps)))
+    last: Optional[Image.Image] = None
+    last_raw = b""
+    ended = False
+    held_text, held_buf = None, None
+    try:
+        for i in range(n):
+            t = i / fps
+            text = _cue_text_at(cues, t) if cues else ""
+            same = False
+            if not ended:
+                raw = proc.stdout.read(size)
+                if len(raw) == size:
+                    same = raw == last_raw
+                    if not same:
+                        last_raw = raw
+                        last = _web_redact(rend, Image.frombuffer("RGB", (w, h), raw, "raw", "RGB", 0, 1))
+                else:
+                    ended = True
+            if (ended or same) and held_buf is not None and held_text == text and t >= 0.35:
+                yield held_buf                       # the recording stands still and the subtitle hasn't changed
+                continue
+            img = rend.stage.copy()
+            if last is not None:
+                img.paste(last, (x0, y0), mask)
+            if t < 0.35 and rend.fade_in:
+                k = ease_out_cubic(t / 0.35)
+                if rend.prev_frame is not None and rend.prev_frame.size == img.size:
+                    img = Image.blend(rend.prev_frame, img, k)
+                else:
+                    ImageDraw.Draw(img, "RGBA").rectangle((0, 0, rend.W, rend.H), fill=theme.bg + (int(255 * (1 - k)),))
+            if text:
+                img = draw_subtitle(img, text, theme)
+            buf = img.tobytes()
+            held_text, held_buf = text, buf
+            yield buf
+    finally:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+        proc.wait()
+
+
+def _web_redact(rend: StepRenderer, frame: Image.Image) -> Image.Image:
+    """The step's redaction boxes burned into a recorded frame too (they are drawn on the slide's still, in its pixels)."""
+    s = rend.step
+    if not s.redactions:
+        return frame
+    from .renderer import apply_redactions
+    return apply_redactions(frame.copy(), s.redactions, frame.width / max(1, s.viewport_w or s.img_w or frame.width))
+
+
+def _web_still(rend: StepRenderer, src: Path, t: float) -> Optional[Image.Image]:
+    """The recorded HTML slide at second t, in its place on the stage (the picture a following slide fades from)."""
+    x0, y0, x1, y1 = rend.draw_box
+    frame = clips.grab_frame(src, max(0.0, t), x1 - x0, y1 - y0)
+    if frame is None:
+        return None
+    img = rend.stage.copy()
+    img.paste(_web_redact(rend, frame), (x0, y0), _web_mask(x1 - x0, y1 - y0, rend.H))
+    return img
+
+
 # ---- main flow -------------------------------------------------------------
 
 def preview_size(cfg: dict, max_width: int = 1280, max_fps: int = 24) -> Dict[str, int]:
@@ -336,6 +497,18 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
     vf_args = {s.id: _video_first_args(proj, s, theme) for s in steps if slide_sequence.is_video_first(s)}
     vf_base = {o.id: _video_first_base(proj, o, theme, vf_args.get(o.id, {})) for o in video_owner.values()}
 
+    # --- 0. HTML slides are recorded first (in a browser); a recording may make its step longer ---
+    web_clips: Dict[str, Path] = {}
+    web_len: Dict[str, float] = {}
+    web_warn = ""
+    lives = [s for s in steps if webdeck.live(s)]
+    if lives:
+        web_clips, web_len, web_warn, recorded = _record_web(
+            proj, lives, cfg, theme, fps, (lambda f, m: progress(f * 0.45, m)) if progress else None)
+        if recorded and progress:
+            outer = progress
+            progress = lambda f, m: outer(0.45 + 0.55 * f, m)      # noqa: E731 — the rest of the bar is the render
+
     # --- 1. plan the timeline ---
     plan: List[Dict] = []
     cursor_t = 0.0
@@ -350,7 +523,7 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
         cursor_t += dur
     bad_audio: List[Tuple[int, str]] = []        # voice-over files that are missing / unreadable, rendered as silence (the user is told at the end)
     for no, s in enumerate(steps, 1):
-        dur = step_duration(s, cfg)
+        dur = max(step_duration(s, cfg), web_len.get(s.id, 0.0))
         s.duration = dur
         ap = auds / s.audio if s.audio else None
         if ap is not None and not ap.exists() and not s.plays_clip_audio():
@@ -397,9 +570,15 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
 
     slug = _safe_name(proj.title or proj.name)
     srt_path = out_dir / f"{slug}.srt"
+    # burned-in subtitles saved again as .srt / .vtt next to the video are shown a second time by players that pick them up
+    sidecar = not burn or bool(cfg.get("sidecar_subtitles", True))
     if preview_out is None:                  # (a preview must not touch the subtitle files of the real video)
-        subs.write_srt(global_cues, srt_path)
-        subs.write_vtt(global_cues, out_dir / f"{slug}.vtt")
+        if sidecar:
+            subs.write_srt(global_cues, srt_path)
+            subs.write_vtt(global_cues, out_dir / f"{slug}.vtt")
+        else:
+            srt_path.unlink(missing_ok=True)
+            (out_dir / f"{slug}.vtt").unlink(missing_ok=True)
         # main subtitle timeline: second-language subtitles (external) can be generated later without re-rendering
         second_subs.save_primary(out_dir, f"{slug}.mp4", global_cues, proj.language, burned=burn, space=theme.sub_space,
                                  bottom=sub_bottom(theme))
@@ -451,6 +630,10 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
             pr = StepRenderer(step=ps, screenshot_path=shots / ps.screenshot if ps.screenshot else Path("_"),
                               theme=theme, total_steps=len(steps), duration=prev["duration"], step_no=prev["no"],
                               speech_offset=prev.get("lead", 0.0), **vf_args.get(ps.id, {}))
+            if ps.id in web_clips:                   # a recorded HTML slide ends as its recording ends, not as its still
+                still = _web_still(pr, web_clips[ps.id], min(prev["duration"], web_len.get(ps.id, prev["duration"])) - 1.0 / fps)
+                if still is not None:
+                    return still
             return pr.frame(max(0.36, prev["duration"] - 1.0 / fps))
         except Exception:
             return None
@@ -496,6 +679,13 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
                     return frames
                 # the first video of a video-first slide opens that slide: it comes in like a slide change
                 return _fade_in(frames, _prev_slide_frame(i), theme.bg, fps, W, H)
+        elif item["kind"] == "step" and item["step"].id in web_clips:
+            def make_frames(item=item, cues=cues, i=i):
+                s: Step = item["step"]
+                rend = StepRenderer(step=s, screenshot_path=shots / s.screenshot if s.screenshot else Path("_"),
+                                    theme=theme, total_steps=len(steps), duration=item["duration"], step_no=item["no"],
+                                    speech_offset=item.get("lead", 0.0), prev_frame=_prev_slide_frame(i))
+                return _web_frames(rend, web_clips[s.id], item["duration"], fps, cues, theme)
         elif item["kind"] == "step":
             def make_frames(item=item, cues=cues, i=i):
                 s: Step = item["step"]
@@ -584,6 +774,8 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
     if bad_audio:
         warning = i18n.t("有 {n} 段的配音文件读不出来（{parts}），已按静音生成。请重新配音后再渲染。",
                          n=len(bad_audio), parts=("、" if i18n.current() == "zh" else ", ").join(x for _, x in sorted(bad_audio)))
+    if web_warn:
+        warning = "\n\n".join(w for w in (warning, web_warn) if w)
     if progress:
         done_msg = i18n.t("完成！时长 {duration} 秒，耗时 {elapsed} 秒", duration=f"{total_dur:.1f}", elapsed=f"{elapsed:.0f}")
         progress(1.0, done_msg + (" " + warning if warning else ""))
@@ -592,7 +784,7 @@ def _render(proj: Project, cfg: dict, theme: Theme, W: int, H: int, fps: int, bu
         "file": out_path.name,
         "duration": round(total_dur, 2),
         "size": out_path.stat().st_size if out_path.exists() else 0,
-        "srt": srt_path.name if preview_out is None else "",
+        "srt": srt_path.name if preview_out is None and sidecar else "",
         # where each step lies in the video (the editor follows the playback in the step list)
         "segments": [{"id": (it["step"].id if it["kind"] == "step" else "__%s__" % it["kind"]),
                       "start": round(it["start"], 2), "end": round(it["start"] + it["duration"], 2)} for it in plan],

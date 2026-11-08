@@ -24,8 +24,8 @@ from typing import Any, Callable, Dict, List, Optional
 from PIL import Image, ImageDraw
 
 from .. import config, i18n, storage
-from ..models import Project, RevealItem, SlideReveal, SlidesCreateReq, Step
-from . import clips, slide_reveal
+from ..models import Project, RevealItem, SlideReveal, SlidesCreateReq, Step, WebPage
+from . import cdp, clips, slide_reveal, web_actions, webdeck
 
 Progress = Optional[Callable[[float, str], None]]
 
@@ -278,8 +278,8 @@ def _render_text_fallback(slides: List[Dict[str, Any]], out_dir: Path) -> None:
 
 def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict[str, Any]:
     ext = Path(filename).suffix.lower()
-    if ext not in (".pptx", ".ppt", ".pdf"):
-        raise SlidesError(i18n.t("只支持 .pptx / .ppt / .pdf"))
+    if ext not in (".pptx", ".ppt", ".pdf") + webdeck.EXTS:
+        raise SlidesError(i18n.t("只支持 .pptx / .ppt / .pdf / .html / .zip"))
     iid = "imp_" + uuid.uuid4().hex[:10]
     d = import_dir(iid)
     d.mkdir(parents=True, exist_ok=True)
@@ -289,10 +289,24 @@ def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict
     slides: List[Dict[str, Any]] = []
     engine = ""
     video_source: Optional[Path] = None           # which pptx to take the videos from (for .ppt, the copy converted by PowerPoint)
+    web: Optional[Dict[str, Any]] = None
     if progress:
         progress(0.03, i18n.t("读取文件…"))
 
-    if ext == ".pdf":
+    if ext in webdeck.EXTS:
+        # an HTML deck: read in a headless browser (its slides, notes, controls and a still of each slide)
+        try:
+            r = webdeck.analyze(src, filename, d, progress)
+        except (webdeck.WebDeckError, cdp.CDPError) as e:
+            raise SlidesError(str(e))
+        slides, engine = r["slides"], r["engine"]
+        deck = r["deck"]
+        web = {"kind": deck.get("kind"), "nav": (deck.get("nav") or {}).get("how", ""), "missing": deck.get("missing", []),
+               "failed": deck.get("failed", []), "skipped": deck.get("skipped", []),
+               "cues": sum(1 for s in slides if web_actions.find_cues(s["notes"])),
+               "controls": sum(1 for s in slides if s["web"]["controls"])}
+        ext = ".html"
+    elif ext == ".pdf":
         r = _render_pdf(src, d, progress)
         engine = r["engine"]
         slides = [{"i": i, "title": (r["texts"][i].splitlines() or [""])[0][:80],
@@ -359,6 +373,8 @@ def analyze(upload_path: Path, filename: str, progress: Progress = None) -> Dict
         "with_videos": sum(1 for s in slides if s["videos"]),
         "slides": slides,
     }
+    if web is not None:
+        manifest["web"] = web
     _save_manifest(iid, manifest)
     if progress:
         progress(1.0, i18n.t("解析完成：{n} 页，{notes} 页有备注（{engine}）", n=len(slides),
@@ -401,6 +417,19 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
         proj.voice = proj.speakers[0].voice
     src_dir = import_dir(iid)
     warnings: List[str] = []
+    web = man.get("web")
+    if web is not None:
+        # an HTML deck: its files go with the project (the slides are recorded from them when rendering)
+        webdeck.install(src_dir, proj.id)
+        proj.settings["web_cursor"] = bool(req.web_cursor)
+        proj.settings["web_focus"] = bool(req.web_focus)
+        if web.get("missing"):
+            warnings.append(i18n.t("网页引用了 {n} 个没有一起上传的文件（例如 {name}），这些内容在视频里会缺失。"
+                                   "图片和样式放在别的文件里时，请把整个文件夹打包成 .zip 再导入。",
+                                   n=len(web["missing"]), name=web["missing"][0]))
+        if web.get("failed"):
+            warnings.append(i18n.t("网页有 {n} 个在线资源没能加载（例如 {url}），画面可能和平时看到的不一样。",
+                                   n=len(web["failed"]), url=web["failed"][0][:120]))
     reveal = _export_reveal(man, slides, src_dir, req, warnings, progress)
     proj.settings["slides_reveal"] = bool(reveal)
     for s in slides:
@@ -412,6 +441,13 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
         shutil.copyfile(src_dir / f"slide_{s['i']:03d}.png", storage.screenshots_dir(proj.id) / fname)
         step.screenshot = fname
         step.viewport_w, step.viewport_h = step.img_w, step.img_h
+        if web is not None and s.get("web") is not None:
+            sw = s["web"]
+            # "animate" / "still": no clicks (they can be added in the editor); the slide's parts still come in one by one
+            step.web = WebPage(page=s["i"] - 1, live=req.web_mode != "still", controls=webdeck.controls_of(sw.get("controls")),
+                               blocks=webdeck.blocks_of(sw.get("blocks")),
+                               builds=int(sw.get("builds", 0)), build_texts=list(sw.get("build_texts") or []),
+                               clicks=req.web_mode == "demo")
         if s["i"] in reveal:
             step.reveal = _attach_reveal(proj, step, reveal[s["i"]], src_dir / "reveal")
             # the cover appears as a whole by default: its big title is often in the middle of the page, not in the title area, and would be split into several items. The data is still generated;
@@ -429,8 +465,14 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
     if progress:
         progress(0.1, i18n.t("已创建项目，共 {n} 页", n=len(slides)))
 
-    from .llm import LLMError
+    from .llm import LLMError, ai_disabled
     warning = ""
+    if web is not None and req.web_mode == "demo" and not ai_disabled():
+        # the AI that writes the narration of interactive slides is told what their buttons do: they are tried out first
+        ask = [st for st in proj.steps if st.web is not None and st.web.controls
+               and (req.notes_mode != "verbatim" or (req.missing != "empty" and not st.slide_notes.strip()))]
+        if ask:
+            webdeck.explore(proj, ask, (lambda f, m: progress(0.1 + f * 0.05, m)) if progress else None)
     try:
         res = script_gen.generate_slides_script(
             proj, notes_mode=req.notes_mode, detail=req.detail, missing=req.missing,
@@ -441,6 +483,9 @@ def create_project(iid: str, req: SlidesCreateReq, progress: Progress = None) ->
         res = None
         warning = i18n.t("解说没能自动生成：{error}\n项目已经建好，可以在编辑器里自己写解说，或者配好 AI 后点「① 生成解说」。",
                          error=e)
+    for st in proj.steps:
+        if st.web is not None:
+            web_actions.refresh(st)                  # the clicks the notes ask for, placed in the narration just written
     storage.save(proj)
 
     voiced = None

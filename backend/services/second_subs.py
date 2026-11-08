@@ -303,6 +303,52 @@ def generate(proj: Project, languages: List[str], progress: Progress = None,
     return tracks
 
 
+def sentences(proj: Project) -> Dict[str, Any]:
+    """The main subtitles of the current video merged into sentences, for an external assistant to translate.
+    The translations are sent back to import_track in the same order (one text per sentence)."""
+    primary = load_primary(proj)
+    if not primary or not primary.get("cues"):
+        raise LLMError(i18n.t("还没有渲染好的视频（或者视频没有字幕），先点「③ 渲染视频」。"))
+    sents = group_sentences(primary["cues"])
+    return {"video": proj.output, "language": proj.language, "key": primary_key(primary),
+            "sentences": [{"i": i, "start": round(x["s"], 3), "end": round(x["e"], 3), "text": x["t"]}
+                          for i, x in enumerate(sents)]}
+
+
+def import_track(proj: Project, lang: str, texts: List[str], key: str) -> SubtitleTrack:
+    """Build a second-language track from translations made elsewhere: one text per sentence of sentences(),
+    timed like that sentence (long ones split in two, as generate does). key = the "key" sentences() returned, required:
+    a different one means the video was rendered again meanwhile and the sentences no longer match (the count alone
+    doesn't show that), so old translations never end up on a new video marked as current."""
+    from .script_gen import lang_name
+    primary = load_primary(proj)
+    if not primary or not primary.get("cues"):
+        raise LLMError(i18n.t("还没有渲染好的视频（或者视频没有字幕），先点「③ 渲染视频」。"))
+    if not lang or lang == proj.language:
+        raise LLMError(i18n.t("选一种和视频不同的语言"))
+    cur = primary_key(primary)
+    if not key:
+        raise LLMError(i18n.t("缺少 key：把取句子时返回的 key 和译文一起发回来"))
+    if key != cur:
+        raise LLMError(i18n.t("视频重新渲染过，句子已经变了：请重新取一次句子再翻译"))
+    sents = group_sentences(primary["cues"])
+    if len(texts) != len(sents):
+        raise LLMError(i18n.t("译文要和句子一一对应：需要 {n} 句，收到 {m} 句", n=len(sents), m=len(texts)))
+    cjk = lang.split("-")[0] in ("zh", "ja", "ko")
+    cues: List[List[Any]] = []
+    for x, tr in zip(sents, texts):
+        tr = str(tr or "").strip()
+        if tr:
+            cues += _split(tr, x["s"], x["e"], 38 if cjk else 96, x.get("cuts"))
+    out_dir = storage.output_dir(proj.id)
+    files = track_files(proj.output, lang)
+    write_vtt(cues, out_dir / files["vtt"], lang)
+    write_srt(cues, out_dir / files["srt"], lang)
+    (out_dir / files["json"]).write_text(json.dumps(cues, ensure_ascii=False), encoding="utf-8")
+    return SubtitleTrack(lang=lang, name=lang_name(lang), video=proj.output, key=cur, vtt=files["vtt"],
+                         srt=files["srt"], created_at=time.time())
+
+
 def merge_tracks(proj: Project, new: List[SubtitleTrack]) -> None:
     """Newly generated tracks replace older tracks of the same language."""
     langs = {t.lang for t in new}

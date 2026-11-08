@@ -24,8 +24,9 @@ faster-whisper>=1.0
 
 # PPT / PDF import
 python-pptx>=1.0
-pymupdf>=1.24
+pymupdf>=1.24,<2       # 2.0 brings onnxruntime and a layout model along (hundreds of MB) and is untested here
 pywin32>=306; sys_platform == "win32"   # export slides with the local PowerPoint
+numpy>=1.26            # transparency of the slides' animated elements (speech recognition brings it too, but isn't always installed)
 
 # ffmpeg fallback (used automatically when ffmpeg isn't installed on the system)
 imageio-ffmpeg>=0.4.9

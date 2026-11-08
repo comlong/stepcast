@@ -56,7 +56,12 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--no-browser", action="store_true", help=i18n.t("不自动打开浏览器"))
     parser.add_argument("--reload", action="store_true", help=i18n.t("开发模式：改代码自动重启"))
+    parser.add_argument("--init-settings", metavar="LOCALE", help=argparse.SUPPRESS)   # used by the assistant skill's setup
     args = parser.parse_args()
+    if args.init_settings is not None:
+        from backend.services import first_run
+        print(json.dumps(first_run.write_defaults(args.init_settings), ensure_ascii=False))
+        return 0
 
     port = args.port or int(config.get("server_port", 8756))
     url = f"http://{args.host}:{port}/"
@@ -91,7 +96,7 @@ def main() -> int:
           f"{i18n.t('✓ 已配置') if ai['configured'] else i18n.t('✗ 未配置（界面右上角设置里填）')}")
     print("-" * 62)
     print("  " + i18n.t("Chrome 扩展：打开 chrome://extensions → 开发者模式 → 加载已解压的扩展程序"))
-    print("  " + i18n.t("选择 {path}", path=config.INSTALL_DIR / "extension"))
+    print("  " + i18n.t("选择 {path}", path=config.EXTENSION_DIR))
     print("  " + i18n.t("按 Ctrl+C 停止服务"))
     print("=" * 62)
 

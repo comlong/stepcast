@@ -210,8 +210,24 @@ async function refreshProject(keepStep = true) {
 }
 
 async function showProjects() {
-  const { projects } = await api('/api/projects');
-  $('#projList').innerHTML = projects.length ? projects.map(p => `
+  S.projects = (await api('/api/projects')).projects;
+  $('#projSearch').value = '';
+  $('#projSearch').oninput = renderProjectList;
+  renderProjectList();
+  $('#mProjects').classList.remove('hidden');
+}
+
+/** Folders opened in the project list (remembered in this browser only; a closed folder is just one line). */
+function openFolders() {
+  try { return new Set(JSON.parse(localStorage.getItem('vt_open_folders') || '[]')); } catch (e) { return new Set(); }
+}
+
+function keepOpenFolders(set) {
+  try { localStorage.setItem('vt_open_folders', JSON.stringify([...set])); } catch (e) { /* private window: not remembered */ }
+}
+
+function projectRow(p) {
+  return `
     <div class="projrow" data-id="${p.id}">
       <img src="${p.thumbnail ? `/api/projects/${encodeURIComponent(p.id)}/file/screenshots/${encodeURIComponent(p.thumbnail)}` : ''}" alt="">
       <div class="grow">
@@ -219,13 +235,117 @@ async function showProjects() {
           ${p.source === 'slides' ? '<span class="badge ppt">PPT</span>' : ''}</div>
         <div class="small muted">${t('{n} 步', { n: p.steps })} · ${new Date(p.updated_at * 1000).toLocaleString(i18nLang())} ${p.output ? '· ' + t('已导出') : ''}</div>
       </div>
+      <button class="sm" data-move="${p.id}" title="${t('移到文件夹')}">📁</button>
       <button class="sm danger" data-del="${p.id}">${t('删除')}</button>
-    </div>`).join('') : `<p class="muted small">${t('还没有项目。用 Chrome 扩展录一段，或新建空项目。')}</p>`;
-  $('#mProjects').classList.remove('hidden');
+    </div>`;
+}
+
+/** The project list: folders first (closed unless opened, or while searching), then the projects in no folder. */
+function renderProjectList() {
+  const all = S.projects || [];
+  const q = $('#projSearch').value.trim().toLowerCase();
+  const shown = q ? all.filter(p => p.name.toLowerCase().includes(q) || (p.folder || '').toLowerCase().includes(q)) : all;
+  const open = openFolders();
+  const folders = [...new Set(shown.map(p => p.folder).filter(Boolean))].sort((a, b) => a.localeCompare(b, i18nLang()));
+  let html = '';
+  for (const f of folders) {
+    const items = shown.filter(p => p.folder === f);
+    const isOpen = !!q || open.has(f);
+    html += `
+      <div class="projfolder" data-folder="${escapeHtml(f)}">
+        <span class="caret">${isOpen ? '▾' : '▸'}</span><span>📁</span><b class="grow">${escapeHtml(f)}</b>
+        <span class="small muted">${t('{n} 个项目', { n: items.length })}</span>
+        <button class="sm" data-folder-menu="${escapeHtml(f)}" title="${t('文件夹')}">⋯</button>
+      </div>` + (isOpen ? `<div class="projfolder-items">${items.map(projectRow).join('')}</div>` : '');
+  }
+  const loose = shown.filter(p => !p.folder);
+  if (folders.length && loose.length) html += `<div class="small muted projsep">${t('未归类的项目')}</div>`;
+  html += loose.map(projectRow).join('');
+  if (!all.length) html = `<p class="muted small">${t('还没有项目。用 Chrome 扩展录一段，或新建空项目。')}</p>`;
+  else if (!shown.length) html = `<p class="muted small">${t('没有找到含「{q}」的项目或文件夹', { q: $('#projSearch').value.trim() })}</p>`;
+  $('#projList').innerHTML = html;
+  $('#projSearch').classList.toggle('hidden', !all.length);
+  bindProjectList();
+}
+
+async function moveToFolder(pid, folder) {
+  let stored;
+  try {
+    stored = (await api(`/api/projects/${pid}/folder`, { method: 'POST', body: { folder } })).folder;   // the name as saved (tidied up)
+  } catch (e) { toast(e.message, true); return; }
+  if (stored) {                                   // show where it went
+    const open = openFolders();
+    open.add(stored);
+    keepOpenFolders(open);
+  }
+  S.projects = (await api('/api/projects')).projects;
+  renderProjectList();
+  toast(stored ? t('已移到「{folder}」', { folder: stored }) : t('已移出文件夹'));
+}
+
+function askFolderName(current = '') {
+  const name = prompt(t('文件夹名称'), current);
+  return name == null ? null : name.trim();
+}
+
+function bindProjectList() {
   $$('#projList .projrow').forEach(row => {
     row.onclick = (e) => {
-      if (e.target.dataset.del) return;
+      if (e.target.dataset.del || e.target.dataset.move) return;
       openProject(row.dataset.id);
+    };
+  });
+  $$('#projList .projfolder').forEach(head => {
+    head.onclick = (e) => {
+      if (e.target.dataset.folderMenu !== undefined) return;
+      const open = openFolders();
+      const f = head.dataset.folder;
+      if (open.has(f)) open.delete(f); else open.add(f);
+      keepOpenFolders(open);
+      renderProjectList();
+    };
+  });
+  $$('#projList [data-move]').forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const p = (S.projects || []).find(x => x.id === b.dataset.move);
+      if (!p) return;
+      const folders = [...new Set((S.projects || []).map(x => x.folder).filter(Boolean))]
+        .filter(f => f !== p.folder).sort((a, c) => a.localeCompare(c, i18nLang()));
+      showMenu(b, [
+        ...folders.map(f => ['📁 ' + f, () => moveToFolder(p.id, f)]),
+        [t('新建文件夹…'), () => {
+          const name = askFolderName();
+          if (name) moveToFolder(p.id, name);
+        }],
+        ...(p.folder ? [[t('移出文件夹'), () => moveToFolder(p.id, '')]] : []),
+      ]);
+    };
+  });
+  $$('#projList [data-folder-menu]').forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const f = b.dataset.folderMenu;
+      const n = (S.projects || []).filter(p => p.folder === f).length;
+      const rename = async (to) => {
+        try {
+          to = (await api('/api/folders/rename', { method: 'POST', body: { old: f, new: to } })).folder;
+        } catch (err) { toast(err.message, true); return; }
+        const open = openFolders();
+        if (open.delete(f) && to) open.add(to);
+        keepOpenFolders(open);
+        S.projects = (await api('/api/projects')).projects;
+        renderProjectList();
+      };
+      showMenu(b, [
+        [t('改名'), () => {
+          const name = askFolderName(f);
+          if (name && name !== f) rename(name);
+        }],
+        [t('解散文件夹'), () => {
+          if (confirm(t('解散「{folder}」？里面的 {n} 个项目会放回外面，项目本身不会被删除。', { folder: f, n }))) rename('');
+        }],
+      ]);
     };
   });
   $$('#projList [data-del]').forEach(b => {
@@ -239,7 +359,8 @@ async function showProjects() {
         PENDING.steps.clear(); PENDING.project = null; PENDING.pid = '';
         S.project = null; location.href = '/'; return;
       }
-      showProjects();
+      S.projects = (await api('/api/projects')).projects;   // keeps the search and the open folders
+      renderProjectList();
     };
   });
 }
@@ -1301,6 +1422,8 @@ function fillSettingsForm() {
   $('#sSubs').checked = !!c.burn_subtitles;
   $('#sPaidTts').checked = c.tts_paid_enabled !== false;
   $('#sSubSpace').checked = c.second_sub_space !== false;
+  $('#sSidecar').checked = c.sidecar_subtitles !== false;
+  $('#sAiOff').checked = !!c.ai_disabled;
   $('#sIntro').checked = !!c.intro_enabled;
   $('#sOutro').checked = c.outro_enabled !== false;
   $('#sMinDur').value = c.min_step_duration ?? 2.5;
@@ -1347,6 +1470,8 @@ async function saveSettings() {
     browser_frame: $('#sFrame').checked,
     burn_subtitles: $('#sSubs').checked,
     second_sub_space: $('#sSubSpace').checked,
+    sidecar_subtitles: $('#sSidecar').checked,
+    ai_disabled: $('#sAiOff').checked,
     intro_enabled: $('#sIntro').checked,
     outro_enabled: $('#sOutro').checked,
     min_step_duration: Number($('#sMinDur').value),
@@ -1435,6 +1560,7 @@ function bindUI() {
   initHighlightDrag();
   initRedactDrag();
   bindVoiceAndImport();
+  bindWebBox();
   bindPlayback();
 
   // redaction
@@ -1903,6 +2029,7 @@ function showMenu(anchor, items) {
   Object.assign(box.style, {
     position: 'fixed', zIndex: 80, background: 'var(--panel2)', border: '1px solid var(--line)',
     borderRadius: '9px', padding: '5px', boxShadow: '0 10px 30px rgba(0,0,0,.5)', minWidth: '170px',
+    maxHeight: (innerHeight - 12) + 'px', overflowY: 'auto',     // a long list (e.g. many folders) scrolls instead of leaving the window
   });
   items.forEach(([label, fn]) => {
     const b = document.createElement('button');
@@ -1914,8 +2041,10 @@ function showMenu(anchor, items) {
   });
   document.body.appendChild(box);
   const r = anchor.getBoundingClientRect();
-  box.style.left = r.left + 'px';
-  box.style.top = (r.top - box.offsetHeight - 6) + 'px';
+  // above the button (the bottom bar's menus); below it when there's no room above, and never past the right edge of the window
+  box.style.left = Math.max(6, Math.min(r.left, innerWidth - box.offsetWidth - 6)) + 'px';
+  const above = r.top - box.offsetHeight - 6;
+  box.style.top = (above >= 6 ? above : Math.min(r.bottom + 6, innerHeight - box.offsetHeight - 6)) + 'px';
   setTimeout(() => document.addEventListener('click', () => box.remove(), { once: true }), 0);
 }
 
@@ -1954,6 +2083,152 @@ function renderSlideBox(s) {
   $('#btnUseNotes').disabled = !(s.slide_notes || '').trim();
   renderRevealBox(s);
   renderSeqBox(s);
+  renderWebBox(s);
+}
+
+/* ---------- HTML slides: their recording and the clicks done while the narration plays ---------- */
+
+function webControlLabel(c) {
+  return (c.name || c.text || '').replace(/\s+/g, ' ').trim().slice(0, 40) || t('（没有文字的控件）');
+}
+
+function webBlockLabel(b) {
+  return (b.text || b.key || '').replace(/\s+/g, ' ').trim().slice(0, 40);
+}
+
+/** Which sentence of the narration an action is at (the sentences the server last saw); units.length = after the narration. */
+function webUnitOf(w, a) {
+  const units = w.units || [];
+  if (!units.length || a.pos >= (w.units_for || '').trimEnd().length) return units.length;
+  let k = 0;
+  units.forEach((u, i) => { if (u.a <= a.pos) k = i; });
+  return k;
+}
+
+let webRefreshTimer = 0;
+
+function renderWebBox(s) {
+  const w = s.web;
+  $('#webBox').classList.toggle('hidden', !w);
+  $('#revealBox').classList.toggle('hidden', !!w);         // reveal-one-by-one is PowerPoint's; an HTML slide has its own animations
+  if (!w) return;
+  if ((w.units_for || '') !== (s.narration || '')) {
+    // the narration was edited: its sentences (and the automatic clicks) follow once it is saved
+    clearTimeout(webRefreshTimer);
+    webRefreshTimer = setTimeout(() => refreshProject(), 1200);
+  }
+  const live = w.live !== false;
+  $('#fWebLive').checked = live;
+  $('#fWebCursor').checked = (S.project.settings || {}).web_cursor !== false;
+  $('#fWebCursor').disabled = !live;
+  const focusOn = (S.project.settings || {}).web_focus !== false;
+  $('#fWebFocus').checked = focusOn;
+  $('#fWebFocus').disabled = !live;
+  const units = w.units || [];
+  const ctrls = w.controls || [];
+  const blocks = w.blocks || [];
+  const acts = w.actions || [];
+  const unitOpts = units.map((u, i) => `<option value="${i}">${escapeHtml(t('第 {n} 句：{text}', { n: i + 1, text: u.text.slice(0, 18) }))}</option>`).join('')
+    + `<option value="${units.length}">${t('讲完以后')}</option>`;
+  const ctlOpts = ctrls.map((c, i) => `<option value="${i}">${escapeHtml(webControlLabel(c))}</option>`).join('');
+  const blockOpts = blocks.map((b, i) => `<option value="${i}">${escapeHtml(webBlockLabel(b))}</option>`).join('');
+  $('#webActs').innerHTML = !live ? ''
+    : acts.length ? acts.map((a, k) => `
+      <div class="web-act" data-k="${k}">
+        <select class="wa-unit" title="${t('讲到哪一句时')}">${unitOpts}</select>
+        <select class="wa-kind">
+          ${ctrls.length ? `<option value="click">${t('点击')}</option><option value="hover">${t('鼠标移到')}</option>` : ''}
+          ${w.builds ? `<option value="next">${t('显示下一部分（→）')}</option>` : ''}
+          ${blocks.length ? `<option value="focus">${t('高亮')}</option>` : ''}
+        </select>
+        <select class="wa-ctl" title="${a.kind === 'focus' ? t('高亮哪块内容') : t('点哪里')}">${a.kind === 'focus' ? blockOpts : ctlOpts}</select>
+        <button class="xs wa-del" title="${t('删除')}">✕</button>
+      </div>`).join('')
+      : `<p class="small muted" style="margin:6px 0">${t('这一页没有安排点击，只录下页面自己的动画。')}</p>`;
+  $$('#webActs .web-act').forEach(row => {
+    const a = acts[Number(row.dataset.k)];
+    row.querySelector('.wa-unit').value = String(webUnitOf(w, a));
+    row.querySelector('.wa-kind').value = a.kind;
+    const ctl = row.querySelector('.wa-ctl');
+    ctl.value = String(Math.max(0, a.control));
+    ctl.classList.toggle('off', a.kind === 'next');
+    row.classList.toggle('off', a.kind === 'focus' && !focusOn);
+    row.querySelectorAll('select').forEach(sel => { sel.onchange = () => saveWebActions(s); });
+    row.querySelector('.wa-kind').onchange = e => {
+      // a control and a piece of content are numbered separately: another kind starts from the first of its list
+      if ((e.target.value === 'focus') !== (a.kind === 'focus')) ctl.innerHTML = e.target.value === 'focus' ? blockOpts : ctlOpts;
+      saveWebActions(s);
+    };
+    row.querySelector('.wa-del').onclick = () => saveWebActions(s, Number(row.dataset.k));
+  });
+  $('#webAdd').disabled = !live || (!ctrls.length && !w.builds);
+  $('#webAddFocus').disabled = !live || !blocks.length || !focusOn;
+  $('#webAddFocus').classList.toggle('hidden', !live || !blocks.length);
+  $('#webAuto').disabled = !live;
+  $('#webAdd').classList.toggle('hidden', !live);
+  $('#webAuto').classList.toggle('hidden', !live);
+  $('#webHint').textContent = !live
+    ? t('这一页按静态画面生成，不录动画。')
+    : [w.manual ? t('这些点击是手动设置的；改了解说词，它们会跟着原来那句话走。点「按讲稿重新安排」可以恢复自动。')
+      : w.clicks === false ? t('只录页面自己的动画，不点按钮；分步出现的内容按解说依次出现。点「按讲稿重新安排」会按备注里的提示加上点击。')
+      : t('这些点击是按讲稿自动安排的（备注里「（点…）」这类提示，或者解说里提到的按钮），改了解说词会自动跟着调整。'),
+    !w.manual && focusOn && acts.some(a => a.kind === 'focus') ? t('「高亮」是解说提到页面上的内容时自动加的。') : '',
+    ctrls.length ? t('这一页有 {n} 个可以点的地方。', { n: ctrls.length }) : t('这一页没有可以点的按钮。'),
+    t('录制在渲染视频时进行；改完点「▶ 回放本页」就能看到效果。')].filter(Boolean).join(' ');
+}
+
+/** Save the actions shown in the panel (set by hand from now on). skip = index of a row being deleted. */
+async function saveWebActions(s, skip = -1) {
+  const w = s.web;
+  const rows = $$('#webActs .web-act').filter(r => Number(r.dataset.k) !== skip);
+  const actions = rows.map(r => {
+    const kind = r.querySelector('.wa-kind').value;
+    return { kind, unit: Number(r.querySelector('.wa-unit').value), control: kind === 'next' ? -1 : Number(r.querySelector('.wa-ctl').value) };
+  });
+  await putWeb(s, { actions });
+}
+
+async function putWeb(s, body) {
+  await flushSaves();
+  try {
+    S.project = await api(`/api/projects/${S.project.id}/steps/${s.id}/web`, { method: 'PUT', body });
+  } catch (e) { toast(e.message, true); return; }
+  renderSteps(); renderInspector();
+}
+
+function bindWebBox() {
+  $('#fWebLive').onchange = () => { const s = currentStep(); if (s && s.web) putWeb(s, { live: $('#fWebLive').checked }); };
+  $('#fWebCursor').onchange = () => saveProject({ settings: { web_cursor: $('#fWebCursor').checked } });
+  $('#fWebFocus').onchange = () => {
+    saveProject({ settings: { web_focus: $('#fWebFocus').checked } });
+    const s = currentStep();
+    if (s && s.web) renderWebBox(s);
+  };
+  $('#webAddFocus').onclick = () => {
+    const s = currentStep();
+    if (!s || !s.web) return;
+    const w = s.web;
+    const actions = (w.actions || []).map(a => ({ kind: a.kind, unit: webUnitOf(w, a), control: a.control }));
+    const used = new Set(actions.filter(a => a.kind === 'focus').map(a => a.control));
+    const free = (w.blocks || []).findIndex((_, i) => !used.has(i));
+    const last = actions.length ? actions[actions.length - 1].unit : 0;
+    actions.push({ kind: 'focus', unit: Math.min(last, Math.max(0, (w.units || []).length - 1)), control: Math.max(0, free) });
+    putWeb(s, { actions });
+  };
+  $('#webAuto').onclick = () => { const s = currentStep(); if (s && s.web) putWeb(s, { auto: true }); };
+  $('#webAdd').onclick = () => {
+    const s = currentStep();
+    if (!s || !s.web) return;
+    const w = s.web;
+    const actions = (w.actions || []).map(a => ({ kind: a.kind, unit: webUnitOf(w, a), control: a.control }));
+    const used = new Set(actions.map(a => a.control));
+    const free = (w.controls || []).findIndex((_, i) => !used.has(i));
+    const last = actions.length ? actions[actions.length - 1].unit : 0;
+    actions.push((w.controls || []).length
+      ? { kind: 'click', unit: Math.min(last + (actions.length ? 1 : 0), (w.units || []).length), control: Math.max(0, free) }
+      : { kind: 'next', unit: last, control: -1 });
+    putWeb(s, { actions });
+  };
 }
 
 /** The video steps right after a slide belong to it (same rule as slide_sequence.videos_after in the backend). */
@@ -2350,24 +2625,41 @@ function openImport() {
   $('#imFile').value = '';
   $('#imStatus').textContent = '';
   $('#imDrop').style.pointerEvents = '';
+  $('#imWebTipsText').textContent = webDeckTips();
+  $('#imWebTips').open = false;
   $('#imLang').innerHTML = langOptions();
   $('#imLang').value = S.settings.language || 'en-US';
   fillVoiceSelect($('#imVoice'), $('#imLang').value, S.settings.voice);
   fillPairVoices($('#imLang').value);
   api('/api/health').then(h => {
     if (!$('#imStatus').textContent) {
-      $('#imStatus').textContent = h.powerpoint
+      $('#imStatus').textContent = (h.powerpoint
         ? t('✓ 检测到本机 PowerPoint，幻灯片会原样导出')
-        : t('未检测到 PowerPoint：PDF 可以正常导入；PPTX 会用简版文字页代替画面（建议先在 PowerPoint / WPS 里另存为 PDF）');
+        : t('未检测到 PowerPoint：PDF 可以正常导入；PPTX 会用简版文字页代替画面（建议先在 PowerPoint / WPS 里另存为 PDF）'))
+        + (h.web_browser === '' ? ' · ' + t('没有找到 Edge / Chrome，网页演示稿没法导入') : '');
     }
   }).catch(() => {});
   $('#mProjects').classList.add('hidden');
   $('#mImport').classList.remove('hidden');
 }
 
+/** What an AI that makes an HTML deck should know, so that StepCast reads it well (shown in the import dialog, copied with one click). */
+function webDeckTips() {
+  return [
+    t('请把演示稿做成一个 HTML 文件（图片等资源内嵌；或者和网页放在一个文件夹里，打包成 .zip）。'),
+    t('每一页是一个 <section class="slide">，一次只显示一页；画面是固定的 16:9 画布（例如 1280×720，随窗口等比缩放）。'),
+    t('每一页的讲稿写在这一页的 data-notes 属性里：纯文字，就是要念出来的解说。'),
+    t('需要演示点击的地方，在讲稿里用括号写提示，放在要点的那句话前面，例如「（点「运行演示」按钮）」「（依次点 1 到 4 号热点）」；括号里的提示不会被念出来。'),
+    t('按钮上写清楚文字或 aria-label，讲稿里提到同样的词时，会在讲到那里时自动点它。'),
+    t('卡片、要点、表格行的名称写清楚，讲稿里用同样的词，讲到时画面会自动高亮它。'),
+    t('支持用 → 和空格翻页；打开「网页地址#slide-3」时直接显示第 3 页。'),
+    t('动画用 CSS 动画、过渡或 requestAnimationFrame 来做，不要依赖真实的日期时间。'),
+  ].join('\n');
+}
+
 async function imUpload(file) {
   if (!file) return;
-  if (!/\.(pptx|ppt|pdf)$/i.test(file.name)) { toast(t('只支持 .pptx / .ppt / .pdf'), true); return; }
+  if (!/\.(pptx|ppt|pdf|html?|zip)$/i.test(file.name)) { toast(t('只支持 .pptx / .ppt / .pdf / .html / .zip'), true); return; }
   $('#imDrop').style.pointerEvents = 'none';
   $('#imStatus').textContent = t('上传 {name}（{mb} MB）…', { name: file.name, mb: (file.size / 1048576).toFixed(1) });
   try {
@@ -2380,7 +2672,10 @@ async function imUpload(file) {
     if (!man) { $('#imDrop').style.pointerEvents = ''; return; }
     IM.manifest = man;
     IM.selected = new Set(man.slides.filter(x => !x.hidden).map(x => x.i));
-    $('#imName').value = file.name.replace(/\.(pptx|ppt|pdf)$/i, '');
+    $('#imName').value = file.name.replace(/\.(pptx|ppt|pdf|html?|zip)$/i, '');
+    $('#imWebMode').value = 'demo';
+    $('#imWebCursor').checked = true;
+    $('#imWebFocus').checked = true;
     $('#imMode').value = 'single';
     IM.notesPicked = false;
     IM.autoRef = false;
@@ -2433,7 +2728,10 @@ function renderImport() {
   // PDFs have no notes; this PPT has no notes. Say so in both cases instead of mysteriously greying out the dropdown
   const hint = m.ext === '.pdf'
     ? t('PDF 里没有演讲者备注（PowerPoint 另存为 PDF 时不会把备注带上），解说只能由 AI 根据页面内容来写。想用备注作解说，请直接导入 .pptx 文件。')
-    : (!anyNotes ? t('这份 PPT 没有写演讲者备注，解说将由 AI 根据页面内容来写。') : '');
+    : !anyNotes
+      ? (m.web ? t('这份网页演示稿里没找到讲稿（例如每页的 data-notes 或 aside.notes），解说将由 AI 根据页面内容来写。')
+        : t('这份 PPT 没有写演讲者备注，解说将由 AI 根据页面内容来写。'))
+      : '';
   const langHint = otherLang && anyNotes && mode !== 'ignore'
     ? t('备注是{notes}，解说要用{target}：备注不能原样念，会由 AI 参考备注用{target}来写。',
         { notes: langLabel(nl), target: langLabel($('#imLang').value || target) })
@@ -2480,6 +2778,38 @@ function renderImport() {
   }
   $('#imVideosHint').textContent = vh;
   $('#imVideosHint').classList.toggle('hidden', !vh);
+
+  // an HTML deck: how it was read, and what the recording will do
+  const web = m.web;
+  $('#imWebWrap').classList.toggle('hidden', !web);
+  $('#imWebCursorWrap').classList.toggle('hidden', !web || $('#imWebMode').value !== 'demo');
+  $('#imWebFocusWrap').classList.toggle('hidden', !web || $('#imWebMode').value === 'still');
+  let wh = '';
+  if (web) {
+    const how = { hash: t('按网页地址（#…）翻页'), key: t('按键盘翻页'), click: t('点「下一页」按钮翻页'), api: t('用演示框架自己的接口翻页'),
+      scroll: t('整页往下滚动'), pages: t('一个网页文件就是一页'), classes: t('切换页面的样式翻页'), clickpage: t('点击页面翻页') }[web.nav] || '';
+    wh = t('识别为网页演示稿（{browser}）：{n} 页，{how}。', { browser: m.engine, n: m.count, how: how || t('只有一页') });
+    if ($('#imWebMode').value === 'demo') {
+      wh += ' ' + (web.cues
+        ? t('{n} 页的讲稿里有「（点…）」这类操作提示，会在讲到那里时照着点；', { n: web.cues })
+        : t('讲稿里没有「（点…）」这类操作提示；'))
+        + t('解说里提到按钮上的文字时也会去点。导入后可以在每一页右栏的「网页动画和点击」里查看和修改。');
+    }
+    if ($('#imWebMode').value !== 'still' && $('#imWebFocus').checked) wh += ' ' + t('解说提到页面上的内容时，画面会高亮它。');
+    if ($('#imWebMode').value !== 'still') wh += ' ' + t('动画在渲染视频时录制，每页需要几十秒。');
+    if ((web.skipped || []).length) {
+      wh += ' ' + t('注意：第 {pages} 页显示不出来，已跳过。', { pages: web.skipped.join(', ') });
+    }
+    if ((web.missing || []).length) {
+      wh += ' ' + t('注意：网页引用的 {n} 个文件没有一起上传（例如 {name}）；图片等文件另外存放时，请把整个文件夹打包成 .zip 再导入。',
+        { n: web.missing.length, name: web.missing[0] });
+    }
+    if ((web.failed || []).length) {
+      wh += ' ' + t('注意：{n} 个在线资源没能加载（例如 {url}），画面可能和平时看到的不一样。', { n: web.failed.length, url: web.failed[0].slice(0, 80) });
+    }
+  }
+  $('#imWebHint').textContent = wh;
+  $('#imWebHint').classList.toggle('hidden', !wh);
 
   // tell the user where each slide's narration comes from and whether anything goes online
   const ok = '<span style="color:var(--ok)">●</span> ';
@@ -2530,6 +2860,9 @@ async function imCreate() {
     auto_generate: $('#imAutoAll').checked,          // then "Generate all" (voice-over and the video) runs by itself on the server
     videos: $('#imVideos').checked,
     reveal: !$('#imRevealWrap').classList.contains('hidden') && $('#imReveal').checked,
+    web_mode: $('#imWebMode').value,
+    web_cursor: $('#imWebCursor').checked,
+    web_focus: $('#imWebFocus').checked,
   };
   $('#imCreate').disabled = true;
   try {
@@ -2689,7 +3022,15 @@ function bindVoiceAndImport() {
     renderImport();
   };
   $('#imMode').onchange = renderImport;
+  $('#imWebMode').onchange = renderImport;
+  $('#imWebFocus').onchange = renderImport;
   $('#imCreate').onclick = imCreate;
+  $('#imWebTipsCopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(webDeckTips());
+      toast(t('已复制，可以粘贴给生成演示稿的 AI'));
+    } catch (e) { toast(t('复制失败：{error}', { error: e.message }), true); }
+  };
   // "Generate all right after importing" includes the voice-over: the voice-over switch is on and locked while it is on
   $('#imAutoAll').onchange = () => {
     const on = $('#imAutoAll').checked, v = $('#imAutoVoice');

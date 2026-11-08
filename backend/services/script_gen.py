@@ -10,6 +10,7 @@ from .. import i18n, storage
 from ..models import DialogueLine, Project, Step, drop_stale_lines, join_lines
 from . import slide_sequence, slide_timeline
 from .llm import ChatClient, LLMError, get_client
+from .web_actions import strip_cues
 
 # One table for narration languages and second-language subtitles; its order is the order in the UI:
 # Chinese → European languages (common ones first, the rest alphabetically by native name) → other languages. Each has free Edge voices
@@ -86,7 +87,7 @@ def step_digest(s: Step) -> Dict[str, Any]:
         if s.slide_text:
             d["slide_text"] = s.slide_text[:600]
         if s.slide_notes:
-            d["speaker_notes"] = s.slide_notes[:800]
+            d["speaker_notes"] = strip_cues(s.slide_notes)[:800]
     return d
 
 
@@ -254,7 +255,10 @@ SLIDES_SYSTEM = """你是一名培训讲师，要把一份幻灯片讲成配音�
    让观众在这一项出现的时候正好听到它。
 11. 讲到内容块时直接讲内容，用自然的过渡衔接（「先说……」「再看……」「另外……」），不要说「第一块」「第二块」「第一项」这类编号，
    观众看不到这些编号。
-12. 旁白全部用输出语言说：页面和备注里的外语词换成输出语言里的说法，只有品牌名、车型或产品型号、专有名词保留原文。"""  # i18n: ignore
+12. 旁白全部用输出语言说：页面和备注里的外语词换成输出语言里的说法，只有品牌名、车型或产品型号、专有名词保留原文。
+13. 给了 page_blocks 时（网页页面上的内容块）：讲到某一块时说出它在页面上的原词，画面会在你说到时高亮它。
+14. 给了 page_buttons 时（网页上可以点的按钮，result 是点了之后页面上出现的内容）：值得演示的按钮，用它的原文说出来
+   （例如：点一下「运行演示」），画面会在说到时自动点击；接着按 result 讲出现的结果，不要编造 result 之外的结果。不值得演示的不用提。"""  # i18n: ignore
 
 SLIDES_TMPL = """请为下面这份幻灯片写配音旁白。  # i18n: ignore
 
@@ -285,8 +289,9 @@ def notes_as_narration(notes: str) -> str:
     """Speaker notes read as narration, word for word. A line break inside a sentence is only layout and is joined (directly for
     Chinese / Japanese, with a space otherwise). But a new paragraph (after an empty line) or a list item starts a sentence of its own:
     when the text before it has no full stop, one is added, so the voice pauses and the subtitle turns there instead of running a
-    heading into the next sentence. List bullets ("-", "•") aren't read out; numbers ("1.") stay."""
-    notes = (notes or "").strip()
+    heading into the next sentence. List bullets ("-", "•") aren't read out; numbers ("1.") stay. Stage directions for the presenter
+    ("(click)", "（点按钮）") aren't read either."""
+    notes = strip_cues(notes or "").strip()
     if not notes:
         return ""
     cjk = len(_CJK_CHAR.findall(notes)) > len(re.findall(r"[A-Za-z]", notes))
@@ -375,7 +380,7 @@ def generate_slides_script(
                 d: Dict[str, Any] = {"i": s.index, "slide_title": s.page_title[:120],
                                      "slide_text": s.slide_text[:1500]}
                 if notes_mode != "ignore" and s.slide_notes:
-                    d["notes"] = s.slide_notes[:3000]
+                    d["notes"] = strip_cues(s.slide_notes)[:3000]
                 if s.id in as_script:
                     d["notes_are_script"] = True
                 _add_items(d, proj, s)
@@ -444,7 +449,8 @@ DIALOGUE_SYSTEM = """你要把一份幻灯片写成两个人对话讲解的视�
 内容：
 1. 台词完全依据页面内容（标题、正文、备注）；不要编造页面和备注里都没有的数据、结论。
 2. 不要因为是对话就压缩内容：备注和页面上的要点都要讲到，讲师讲的信息量不少于一个人单独讲这一页；主持人的话是额外加的。篇幅按「详细程度」来。
-3. 给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。直接讲内容、自然过渡，不要说「第一块」「第二块」「第一项」这类编号，观众看不到这些编号。标了 "steps_in_order": true 的页，顺序和每一项都必须严格遵守：不能调换、合并或漏掉任何一项。
+3. 给了 page_blocks 时（网页页面上的内容块）：讲到某一块时说出它在页面上的原词，画面会在说到时高亮它。给了 page_buttons 时（网页上可以点的按钮，result 是点了之后页面上出现的内容）：值得演示的按钮用它的原文说出来，画面会在说到时自动点击，接着按 result 讲结果，不要编造。
+   给了 content_items 时（页面上的内容块，已按阅读顺序排好，视频里会随讲解一块块出现）：按这个顺序一块一块地讲，每块至少用一两句单独讲到并点出它的关键词，讲完一块再讲下一块；不要一句话把几块一带而过。直接讲内容、自然过渡，不要说「第一块」「第二块」「第一项」这类编号，观众看不到这些编号。标了 "steps_in_order": true 的页，顺序和每一项都必须严格遵守：不能调换、合并或漏掉任何一项。
 4. 封面、过渡页、只有一张图的页可以短，两三句即可。
 5. 标了 "video_first": true 的页：这一页先播放视频，台词在视频播完之后才说；视频播完后，画面上会依次出现 content_items 里的几条文字。
    台词只讲这几条文字（按顺序一块一块地讲），可以从「刚才视频里……」接过来；页面上的其他内容不讲。没有 content_items 时围绕刚播放的视频简短聊几句。
@@ -491,17 +497,28 @@ steps 必须覆盖输入的全部 i；who 只能是 host 或 expert；text 里�
 def _slide_payload(proj: Project, s: Step, notes_mode: str) -> Dict[str, Any]:
     d: Dict[str, Any] = {"i": s.index, "slide_title": s.page_title[:120], "slide_text": s.slide_text[:1500]}
     if notes_mode != "ignore" and s.slide_notes:
-        d["notes"] = s.slide_notes[:3000]
+        d["notes"] = strip_cues(s.slide_notes)[:3000]
     _add_items(d, proj, s)
     return d
 
 
 def _add_items(d: Dict[str, Any], proj: Project, s: Step) -> None:
     """Add the slide's content items (reveal items in reading order) to its prompt entry.
-    Video-first slides (see slide_sequence) are marked, and only the text over their videos is listed: that is all the narration covers."""
+    Video-first slides (see slide_sequence) are marked, and only the text over their videos is listed: that is all the narration covers.
+    An HTML slide: the pieces of content read from its page, and its buttons with what they bring up."""
     def clean(text: str) -> str:
         return text.replace("\r", " ").replace("\n", " ").replace("\x0b", " ")[:120]
 
+    if s.web is not None:
+        blocks = [clean(b.text or b.key)[:60] for b in s.web.blocks[:24]]
+        if blocks:
+            d["page_blocks"] = blocks
+        if s.web.live and s.web.clicks:
+            buttons = [{"name": clean(c.name or c.text)[:40], **({"result": clean(c.effect)} if c.effect else {})}
+                       for c in s.web.controls[:16] if (c.name or c.text).strip()]
+            if buttons:
+                d["page_buttons"] = buttons
+        return
     all_items = (s.reveal.items if s.reveal else []) or []
     if s.reveal is not None and s.reveal.mode == "timeline":
         # the author's animations: the steps in the order they come in (one step = a card with its text)
